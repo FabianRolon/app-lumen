@@ -1,0 +1,68 @@
+import streamlit as st
+import sqlite3
+from datetime import datetime
+
+def guardar_embalaje(datos):
+    try:
+        # Usamos tu base de datos sombra
+        conn = sqlite3.connect('data/lumen_sombra.db') 
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO registro_embalaje 
+            (fecha, turno, maquina, op, producto, embalador, cajas, unidades_caja, total, descarte, motivo, tension, visual, obs)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', datos)
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        st.error(f"Error al guardar: {e}")
+        return False
+
+def interfaz_embalaje(maquina, datos_orden):
+    st.markdown(f"### 📦 Informe de Embalaje - {maquina}")
+    
+    # Extraemos los datos que ya traes del DBF
+    op = datos_orden.get('ORDPRODU', 'S/D')
+    articulo = datos_orden.get('DESCRIP', 'S/D')
+
+    st.info(f"**OP:** {op} | **Producto:** {articulo}")
+
+    with st.form("form_embalaje_planta"):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            turno = st.selectbox("Turno", ["Mañana", "Tarde", "Noche"])
+        with c2:
+            embalador = st.text_input("Nombre/Legajo Embalador")
+        with c3:
+            unidades_caja = st.number_input("Unidades por Caja", value=100)
+
+        st.write("---")
+        c4, c5 = st.columns(2)
+        with c4:
+            cajas = st.number_input("Cajas Armadas", min_value=0, step=1)
+        with c5:
+            descarte = st.number_input("Unidades Descarte (Rechazo)", min_value=0, step=1)
+
+        st.write("**Controles de Calidad (Basado en Informe Papel)**")
+        cx1, cx2, cx3 = st.columns(3)
+        with cx1:
+            tension = st.checkbox("Control de Tensión OK")
+        with cx2:
+            visual = st.checkbox("Control Visual OK")
+        with cx3:
+            motivo = st.selectbox("Motivo de Rechazo", ["Ninguno", "Rotura", "Burbuja", "Medida", "Impresión"])
+
+        obs = st.text_area("Observaciones")
+        
+        btn = st.form_submit_button("💾 REGISTRAR EMBALAJE")
+        
+        if btn:
+            total_buenas = cajas * unidades_caja
+            datos = (
+                datetime.now().strftime("%Y-%m-%d"), turno, maquina, op, articulo,
+                embalador, cajas, unidades_caja, total_buenas, descarte, motivo,
+                1 if tension else 0, 1 if visual else 0, obs
+            )
+            if guardar_embalaje(datos):
+                st.success(f"✅ Registradas {total_buenas} unidades para la OP {op}")

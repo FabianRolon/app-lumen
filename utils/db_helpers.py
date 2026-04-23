@@ -99,5 +99,27 @@ def inicializar_db():
         )
     ''')
 
+    # Nueva Tabla: Registro de Embalaje
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS registro_embalaje (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha TEXT,
+            hora TEXT,
+            turno TEXT,
+            maquina TEXT,
+            op TEXT,
+            producto TEXT,
+            embalador TEXT,
+            cajas INTEGER,
+            unidades_caja INTEGER,
+            total_unidades INTEGER,
+            descarte_unidades INTEGER,
+            motivo_descarte TEXT,
+            control_tension TEXT,
+            control_visual TEXT,
+            observaciones TEXT
+        )
+    ''')
+
     conn.commit()
     conn.close()

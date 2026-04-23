@@ -294,8 +294,17 @@ def generar_certificado_pdf(fila, datos_extra):
     pdf.cell(w=39.3, h=7.2, txt=cap_texto, border=0, align='C')
     
     texto_impresion = str(datos_extra.get('impresion', fila['impresion'])).upper()
+
     pdf.set_xy(x=53.7- 2.5, y=110.51- 4.75)
+    tamano_fuente_impresion = 10
+    pdf.set_font("helvetica", style="B", size=tamano_fuente_impresion)
+    while pdf.get_string_width(texto_impresion) > 56 and tamano_fuente_impresion > 5:
+        tamano_fuente_impresion -= 1
+        pdf.set_font("helvetica", style="B", size=tamano_fuente_impresion)
     pdf.cell(w=58.11, h=7.2, txt=texto_impresion, border=0, align='C')
+    pdf.set_font("helvetica", style="B", size=10) 
+    
+
     pdf.set_xy(x=114.5- 2.5, y=110.51- 4.75)
     pdf.cell(w=35, h=7.2, txt=str(fila['cod']), border=0, align='C')
     pdf.set_xy(x=53.7- 2.5, y=131.5- 4.75)

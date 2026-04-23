@@ -3,6 +3,7 @@ import datetime
 import sqlite3
 import pandas as pd
 from config import RUTAS, MAQUINAS
+from modulos.embalaje import interfaz_embalaje
 
 # --- MOTORES DE BASE DE DATOS ---
 
@@ -110,9 +111,9 @@ def guardar_maquina_tubo(datos):
 
 # --- INTERFAZ VISUAL ---
 def renderizar_planta(df_st, df_prod):
-    st.title("🏭 Gestión de Planta (Producción y Calidad)")
+    st.title("🏭 Sector Producción (Producción y Calidad)")
     fecha_hoy = datetime.datetime.now().strftime("%Y-%m-%d")
-
+    
     # 1. SELECCIÓN DE MÁQUINA Y AUTO-DETECCIÓN
     with st.container(border=True):
         col_m1, col_m2 = st.columns([1, 3])
@@ -131,7 +132,7 @@ def renderizar_planta(df_st, df_prod):
         lote_mp_fisico = "-"
         desc_prod = "Buscando orden..."
         lote_lumen = "-"
-        nombre_producto_oficial = ""
+        nombre_producto_oficial = ""    
 
         if not df_prod.empty:
             df_prod['MAQUINA_N'] = pd.to_numeric(df_prod['MAQUINA'], errors='coerce').fillna(-1).astype(int)
@@ -287,8 +288,11 @@ def renderizar_planta(df_st, df_prod):
                         st.success("Producción guardada.")
 
             with tab_emb:
-                st.markdown("#### Horneado y Embalaje Final")
-                st.write("Módulo en desarrollo para registro de cajas de tubos...")
+                # Convertimos la orden activa a un DataFrame (tabla) para que el módulo de embalaje lo lea correctamente
+                df_orden = pd.DataFrame([orden_activa]) if orden_activa is not None else pd.DataFrame()
+                
+                # Llamamos a la interfaz que creamos en modulos/embalaje.py
+                interfaz_embalaje(maq_sel, df_orden)
 
             with tab_cierre_t:
                 st.markdown("#### 📊 Cierre de Línea (Tubos)")
