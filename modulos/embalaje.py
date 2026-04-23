@@ -2,12 +2,13 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 from datetime import datetime
+from config import RUTAS
 
 # --- FUNCIONES DE BASE DE DATOS ---
 
 def guardar_control_horario(datos):
     try:
-        conn = sqlite3.connect('data/lumen_sombra.db')
+        conn = sqlite3.connect(RUTAS["lab"])
         cursor = conn.cursor()
         # Crea la tabla automáticamente si no existe en la base de datos
         cursor.execute('''
@@ -37,7 +38,7 @@ def guardar_control_horario(datos):
 
 def guardar_cierre_embalaje(datos):
     try:
-        conn = sqlite3.connect('data/lumen_sombra.db')
+        conn = sqlite3.connect(RUTAS["lab"])
         cursor = conn.cursor()
         # Crea la tabla automáticamente si no existe en la base de datos
         cursor.execute('''
@@ -71,7 +72,7 @@ def guardar_cierre_embalaje(datos):
 
 def cargar_controles_hoy(maquina, op, fecha):
     try:
-        conn = sqlite3.connect('data/lumen_sombra.db')
+        conn = sqlite3.connect(RUTAS["lab"])
         df = pd.read_sql_query(f'''
             SELECT hora as HORA, embalador as LEGAJO, tension as TENSION, visual as VISUAL, obs as OBS 
             FROM embalaje_controles_horarios 
