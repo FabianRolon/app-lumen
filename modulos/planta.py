@@ -258,17 +258,25 @@ def renderizar_planta(df_st, df_prod):
             tab_corte, tab_maq_tubo, tab_emb, tab_cierre_t = st.tabs(["🔪 1. Corte", "⚙️ 2. Máquina (Soplado)", "📦 3. Embalaje", "🏁 Cierre"])
             
             with tab_corte:
-                st.markdown("#### Registro de Corte de Caña")
+                st.markdown("#### Registro de Corte de Tubos")
                 with st.container(border=True):
                     c_c1, c_c2, c_c3 = st.columns(3)
-                    with c_c1: v_bruto = st.number_input("Kg Vidrio Bruto (Caña)", min_value=0.0)
+                    with c_c1: v_bruto = st.number_input("Kg Vidrio Bruto", min_value=0.0)
                     with c_c2: v_neto = st.number_input("Kg Cortados (Útiles)", min_value=0.0)
                     with c_c3: v_desc = st.number_input("Descarte Corte (Kg)", min_value=0.0)
                     
                     v_pin = st.text_input("Firma Cortador", type="password", key="p_corte")
                     if st.button("💾 REGISTRAR CORTE", type="primary", use_container_width=True, disabled=len(v_pin)==0):
-                        guardar_corte_tubo((fecha_hoy, datetime.datetime.now().strftime("%H:%M:%S"), maq_sel, lote_lumen, v_pin, v_bruto, v_neto, v_desc))
-                        st.success("Corte registrado.")
+                        hora_act = datetime.datetime.now().strftime("%H:%M:%S")
+                        
+                        # 1. Guardamos el proceso específico de corte (Trazabilidad)
+                        guardar_corte_tubo((fecha_hoy, hora_act, maq_sel, lote_lumen, v_pin, v_bruto, v_neto, v_desc))
+                        
+                        # 2. ENVIAMOS EL CONSUMO PARA DESCONTAR DEL STOCK DBF (Igual que los viales)
+                        # Le pasamos v_bruto (lo que sacaron del almacén) y v_desc (el descarte)
+                        guardar_consumo_idp((fecha_hoy, hora_act, maq_sel, cod_material, ori_sel, v_bruto, 0, 0, v_desc, 0))
+                        
+                        st.success("✅ Corte registrado y consumo enviado para descuento de stock.")
 
             with tab_maq_tubo:
                 st.markdown("#### Registro de Formado")

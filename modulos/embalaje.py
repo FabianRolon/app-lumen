@@ -176,5 +176,4 @@ def interfaz_embalaje(maquina, datos_orden):
                     )
                     if guardar_cierre_embalaje(datos_cierre):
                         st.success(f"✅ ¡Cierre de turno guardado! Total embalado: **{total_unidades}** unidades.")
-                        st.balloons() # Pequeña animación de éxito
                         # No hacemos rerun de inmediato para que puedan leer el mensaje de éxito y ver el cálculo total

@@ -34,57 +34,77 @@ def sincronizar_stock_dbf():
     df_pendientes = obtener_consumos_pendientes()
     if df_pendientes.empty: return 0, "No hay consumos pendientes."
     
-    df_pendientes['kilos_totales'] = df_pendientes['kilos_usados'] + df_pendientes['descarte_kg']
+    # 1. VOLVEMOS A TUS VARIABLES ORIGINALES (usamos fillna(0) por seguridad matemática)
+    df_pendientes['kilos_totales'] = df_pendientes['kilos_usados'].fillna(0) + df_pendientes['descarte_kg'].fillna(0)
     df_agrupado = df_pendientes.groupby(['codigo_mp', 'origen'], as_index=False)[['kilos_totales', 'tubos_usados']].sum()
     
     consumos_dict = {}
     for index, row in df_agrupado.iterrows():
-        llave = f"{str(row['codigo_mp']).strip().upper()}_{str(row['origen']).strip().upper()}"
-        consumos_dict[llave] = {'k': float(row['kilos_totales']), 't': int(row['tubos_usados'])}
+        # 2. MEJORA DE SEGURIDAD: Usamos una "tupla" en lugar de un texto con guiones bajos.
+        # Así, si tu código es "Z_014", no se rompe la separación.
+        llave = (str(row['codigo_mp']).strip().upper(), str(row['origen']).strip().upper())
+        consumos_dict[llave] = {'k': float(row['kilos_totales']), 't': int(row['tubos_usados']), 'encontrado': False}
     
     mapa_origen_inverso = {'BRASIL': '1', 'CHINA': '2', 'EE.UU.': '3'}
+    
     try:
         shutil.copy2(RUTAS["stock_movimientos"]["red"], RUTAS["stock_movimientos"]["loc"])
         backup_name = f"STOCKMA_BACKUP_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.dbf"
         backup_path = os.path.join(os.path.dirname(RUTAS["stock_movimientos"]["red"]), backup_name)
         shutil.copy2(RUTAS["stock_movimientos"]["red"], backup_path)
         
+        items_actualizados = 0
+
         with dbf.Table(RUTAS["stock_movimientos"]["loc"]) as tabla_maestra:
             tabla_maestra.open(mode=dbf.READ_WRITE)
-            col_ano = next((c for c in tabla_maestra.field_names if c.strip().upper().startswith('A') and c.strip().upper().endswith('O')), None)
+            
             for registro in tabla_maestra:
-                try: ano_registro = int(getattr(registro, col_ano)) if col_ano else 0
-                except: ano_registro = 0
+                # 3. VAMOS DIRECTO A LA COLUMNA "ANO"
+                try: 
+                    ano_registro = int(getattr(registro, 'ANO')) 
+                except: 
+                    ano_registro = 0
                     
+                # Volvemos a tu filtro del 2026
                 if ano_registro == 2026:
                     cod_registro = str(registro.CODIGO).strip().upper()
                     try: ori_registro = str(registro.ORIGEN).strip().replace('.0', '')
                     except: ori_registro = "-"
                     
-                    for llave_pendiente in list(consumos_dict.keys()):
-                        cod_pend, ori_pend = llave_pendiente.split('_')
+                    # Leemos directamente la tupla
+                    for (cod_pend, ori_pend), valores in consumos_dict.items():
                         ori_pend_traducido = mapa_origen_inverso.get(ori_pend, ori_pend)
                         
                         if cod_registro == cod_pend and ori_registro == ori_pend_traducido:
-                            k_restar = consumos_dict[llave_pendiente]['k']
-                            t_restar = consumos_dict[llave_pendiente]['t']
+                            k_restar = valores['k']
+                            t_restar = valores['t']
+                            
                             if k_restar > 0 or t_restar > 0:
                                 nuevo_kilos = float(registro.TKGSTOCK) - k_restar
                                 nuevo_tubos = float(registro.TUBOSSTOCK) - t_restar
                                 dbf.write(registro, TKGSTOCK=nuevo_kilos, TUBOSSTOCK=nuevo_tubos)
-                                consumos_dict[llave_pendiente]['k'] = 0.0
-                                consumos_dict[llave_pendiente]['t'] = 0
+                                
+                                valores['k'] = 0.0
+                                valores['t'] = 0
+                                valores['encontrado'] = True
+                                items_actualizados += 1
 
         shutil.copy2(RUTAS["stock_movimientos"]["loc"], RUTAS["stock_movimientos"]["red"])
-        conn = sqlite3.connect(RUTAS["lab"])
-        cursor = conn.cursor()
-        cursor.execute("UPDATE consumos_planta SET estado_sync = 'PROCESADO' WHERE estado_sync = 'PENDIENTE'")
-        conn.commit()
-        conn.close()
-        st.cache_data.clear()
-        return len(df_pendientes), "Sincronización exacta completada."
+        
+        if items_actualizados > 0:
+            conn = sqlite3.connect(RUTAS["lab"])
+            cursor = conn.cursor()
+            cursor.execute("UPDATE consumos_planta SET estado_sync = 'PROCESADO' WHERE estado_sync = 'PENDIENTE'")
+            conn.commit()
+            conn.close()
+            st.cache_data.clear()
+            return len(df_pendientes), f"✅ Sincronización exitosa. Se actualizaron {items_actualizados} artículos."
+        else:
+            detalles_perdidos = [f"{k[0]} (Origen: {k[1]})" for k, v in consumos_dict.items() if not v['encontrado']]
+            return 0, f"⚠️ Alerta: Ningún código del informe se encontró en el DBF. Revisar: {', '.join(detalles_perdidos)}"
+
     except Exception as e:
-        return -1, f"Error: {e}"
+        return -1, f"Error crítico: {e}"
 
 # ==========================================
 # GESTOR DE PERFILES Y RUTEO DE PANTALLAS
@@ -240,6 +260,14 @@ elif perfil == "Administrador":
             df_pendientes = obtener_consumos_pendientes()
             if not df_pendientes.empty:
                 st.warning(f"🔔 ¡Atención! Hay **{len(df_pendientes)}** reportes de consumo de Planta esperando ser descontados.")
+                
+                st.markdown("**🔍 Detalle de los movimientos a descontar:**")
+                st.dataframe(
+                    df_pendientes[['fecha', 'hora', 'maquina', 'codigo_mp', 'origen', 'kilos_usados', 'tubos_usados', 'desc_destruido']], 
+                    use_container_width=True, 
+                    hide_index=True
+                )
+                
                 if st.button("⚙️ APROBAR Y DESCONTAR DEL STOCK", type="primary"):
                     with st.spinner("Modificando base central y creando backup de seguridad..."):
                         filas, msg = sincronizar_stock_dbf()
