@@ -1,0 +1,24 @@
+# Entornos virtuales
+venv/
+env/
+
+# Bases de datos SQLite (Base de datos sombra y laboratorio)
+*.db
+*.sqlite3
+
+# Archivos del sistema legado (FoxPro/DBase)
+*.dbf
+*.DBF
+*.fpt
+*.FPT
+*.dbt
+*.DBT
+
+# Archivos de caché y temporales de Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Configuraciones y secretos locales
+.env
+.streamlit/secrets.toml
