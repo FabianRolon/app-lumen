@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
+import sqlite3
 import shutil
 from dbfread import DBF
 from config import RUTAS
@@ -44,6 +45,78 @@ def cargar_asistencia():
     else:
         df['SALIDA_DESC'], df['VUELTA_DESC'], df['MIN_DESCANSO'], df['DETALLE_DESCANSO'] = "-", "-", 0, "Sin columnas"
     return df
+
+def sincronizar_personal_dbf():
+    if not os.path.exists(RUTAS["personal"]["red"]):
+        return False, "⚠️ No se encuentra el archivo Empleado.Dbf en la red."
+
+    try:
+        # 1. Copiado de archivos (DBF + Memo)
+        base_red = os.path.splitext(RUTAS["personal"]["red"])[0]
+        base_loc = os.path.splitext(RUTAS["personal"]["loc"])[0]
+        shutil.copy2(RUTAS["personal"]["red"], RUTAS["personal"]["loc"])
+        for ext in ['.FPT', '.fpt', '.DBT', '.dbt']:
+            if os.path.exists(base_red + ext):
+                shutil.copy2(base_red + ext, base_loc + ext)
+
+        # 2. Lectura RAW
+        dbf_data = DBF(RUTAS["personal"]["loc"], encoding='latin1', ignore_missing_memofile=True)
+        df = pd.DataFrame(iter(dbf_data))
+        
+        if df.empty:
+            return False, "❌ El archivo DBF está vacío."
+
+        # --- DIAGNÓSTICO DE COLUMNAS ---
+        # Forzamos todo a mayúsculas para evitar errores de tipeo
+        df.columns = [c.upper() for c in df.columns]
+        columnas_reales = df.columns.tolist()
+        
+        # Verificamos si las columnas mínimas existen
+        columnas_necesarias = ['CUIL', 'LEGAJO', 'NOMBREC']
+        faltantes = [c for c in columnas_necesarias if c not in columnas_reales]
+        if faltantes:
+            return False, f"❌ Faltan columnas en el DBF: {faltantes}. Columnas encontradas: {columnas_reales[:10]}..."
+
+        # --- FILTRO FLEXIBLE DE ACTIVOS ---
+        # Intentamos filtrar por 'ACTIVO' o 'ESTADO'. Si no existen, traemos a todos.
+        if 'ACTIVO' in df.columns:
+            # Aceptamos 'T', True, 'S' (de Sí) o 1
+            activos = df[df['ACTIVO'].astype(str).str.upper().str.startswith(('T', 'S', '1'))].copy()
+        else:
+            activos = df.copy()
+
+        if activos.empty:
+            return False, f"❌ Se leyeron {len(df)} empleados, pero ninguno pasó el filtro de 'ACTIVO'."
+
+        # 3. Guardado en SQLite
+        conn = sqlite3.connect(RUTAS["lab"])
+        cursor = conn.cursor()
+        cursor.execute('''CREATE TABLE IF NOT EXISTS credenciales_empleados 
+                          (dni TEXT PRIMARY KEY, legajo TEXT, nombre TEXT, pin TEXT, rol TEXT, estado TEXT)''')
+        
+        nuevos = 0
+        for _, emp in activos.iterrows():
+            # Limpieza de CUIL para DNI
+            cuil_raw = str(emp.get('CUIL', '')).replace('-', '').strip()
+            dni = cuil_raw if cuil_raw else "0"
+            legajo = str(emp.get('LEGAJO', '')).strip()
+            nombre = str(emp.get('NOMBREC', 'S/N')).strip()
+            pin_inicial = dni[-4:] if len(dni) >= 4 else "1234"
+            
+            if dni != "0":
+                cursor.execute('''INSERT OR REPLACE INTO credenciales_empleados (dni, legajo, nombre, pin, rol, estado)
+                                  VALUES (?, ?, ?, ?, 
+                                  COALESCE((SELECT rol FROM credenciales_empleados WHERE dni=?), 'Planta'), 
+                                  'ACTIVO')''', (dni, legajo, nombre, pin_inicial, dni))
+                nuevos += 1
+                
+        conn.commit()
+        conn.close()
+        
+        return True, f"✅ ¡Éxito! Se procesaron {nuevos} empleados correctamente."
+        
+    except Exception as e:
+        return False, f"❌ Error crítico: {str(e)}"
 
 @st.cache_data(ttl=300) 
 def cargar_pedidos_completos():

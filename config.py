@@ -3,6 +3,7 @@ import streamlit as st
 # --- RUTAS DE BASES DE DATOS ---
 RUTAS = {
     "asist": {"red": r'C:\Reloj\Bases\ASIGTURN.DBF', "loc": r'C:\proyecto_Asistencia\asistencia_temp.dbf'},
+    "personal": {"red": r'\\reloj\Reloj\Bases\Empleado.Dbf', "loc": r'C:\proyecto_Asistencia\empleado_temp.dbf'},
     "bano": {"red": r'\\CALIDAD\Bases\BANODBF.dbf', "loc": r'C:\proyecto_Asistencia\bano_temp.dbf'},
     "lab": r'C:\proyecto_Asistencia\laboratorio.db',
     "pedidos": {"red": r'\\LUMENGLASS\Sistemas\Bases\REMENCA.dbf', "loc": r'C:\proyecto_Asistencia\remenca_temp.dbf'},

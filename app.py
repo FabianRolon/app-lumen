@@ -12,7 +12,7 @@ from config import RUTAS, aplicar_estilos
 from utils.db_helpers import inicializar_db
 from utils.data_core import (
     cargar_asistencia, cargar_pedidos_completos, cargar_produccion, 
-    cargar_bano, cargar_stock_fusionado
+    cargar_bano, cargar_stock_fusionado, sincronizar_personal_dbf
 )
 import modulos.planta as modulo_planta
 import modulos.laboratorio as modulo_laboratorio
@@ -141,7 +141,7 @@ elif perfil == "Administrador":
     clave = st.sidebar.text_input("🔑 Contraseña:", type="password")
     if clave == "admin123":
         st.title("🏭 Nuevo Sistema Lumen Glass")
-        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["🕒 ASISTENCIA", "🚻 BAÑO", "☕ DESCANSO", "🔬 LABORATORIO", "📦 PEDIDOS", "🏭 PRODUCCIÓN", "📦 MATERIA PRIMA"])
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8= st.tabs(["🕒 ASISTENCIA", "🚻 BAÑO", "☕ DESCANSO", "🔬 LABORATORIO", "📦 PEDIDOS", "🏭 PRODUCCIÓN", "📦 MATERIA PRIMA", "SEGURIDAD Y RRHH"])
         hoy = datetime.date.today()
         datos_maestros = cargar_asistencia()
         
@@ -325,6 +325,68 @@ elif perfil == "Administrador":
                     data=csv_data, file_name=f"Informe_Stock_Materia_Prima_{fecha_hoy}.csv",
                     mime="text/csv", use_container_width=True
                 )
+
+        with tab8:
+            # ... dentro de la pestaña de Seguridad y RRHH ...
+            st.subheader("👥 Gestión de Accesos (ISO 9001)")
+            
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                st.info("Sincroniza la nómina desde el sistema central. Los nuevos empleados tendrán por defecto el rol 'Planta' y un PIN inicial (últimos 4 del CUIL).")
+                if st.button("🔄 Sincronizar Empleados (DBF)", use_container_width=True):
+                    with st.spinner("Leyendo base Legada..."):
+                        # Importa la función arriba en tu app.py si no lo hiciste
+                        exito, mensaje = sincronizar_personal_dbf()
+                        if exito:
+                            st.success(mensaje)
+                            st.rerun() # Recarga la tabla de abajo
+                        else:
+                            st.error(mensaje)
+            
+            with col2:
+                # Cargar y mostrar la tabla editable
+                conn = sqlite3.connect(RUTAS["lab"])
+                
+                # Escudo Anti-Crash: Intentamos leer, si la tabla no existe, devolvemos un DataFrame vacío
+                try:
+                    df_usuarios = pd.read_sql_query("SELECT dni as DNI, legajo as Legajo, nombre as Nombre, rol as Rol FROM credenciales_empleados WHERE estado='ACTIVO'", conn)
+                except sqlite3.OperationalError: # Ocurre si la tabla "credenciales_empleados" no existe
+                    df_usuarios = pd.DataFrame()
+                except Exception:
+                    df_usuarios = pd.DataFrame()
+                
+                if not df_usuarios.empty:
+                    st.write("**Personal Activo en el Sistema** (Editá la columna 'Rol' y presioná Guardar)")
+                    
+                    # Tabla editable (RBAC)
+                    df_editado = st.data_editor(
+                        df_usuarios,
+                        column_config={
+                            "Rol": st.column_config.SelectboxColumn(
+                                "Rol Asignado",
+                                help="Nivel de acceso en la app",
+                                options=["Planta", "Embalaje", "Laboratorio", "Administrador"],
+                                required=True
+                            ),
+                            "DNI": st.column_config.TextColumn(disabled=True),
+                            "Legajo": st.column_config.TextColumn(disabled=True),
+                            "Nombre": st.column_config.TextColumn(disabled=True)
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
+                    
+                    if st.button("💾 Guardar Cambios de Roles"):
+                        cursor = conn.cursor()
+                        for index, row in df_editado.iterrows():
+                            cursor.execute("UPDATE credenciales_empleados SET rol=? WHERE dni=?", (row['Rol'], row['DNI']))
+                        conn.commit()
+                        st.success("✅ Roles actualizados correctamente.")
+                else:
+                    # Este es el cartel que te mostrará ahora de forma elegante en vez de explotar
+                    st.warning("No hay empleados en la base de datos segura. Por favor, presioná 'Sincronizar' a la izquierda.")
+                
+                conn.close()
 
     elif clave != "": st.sidebar.error("Contraseña incorrecta")
     else: st.warning("🔒 Ingrese la contraseña en el menú lateral para acceder a la Administración.")

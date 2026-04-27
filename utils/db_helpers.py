@@ -112,14 +112,51 @@ def inicializar_db():
             embalador TEXT,
             cajas INTEGER,
             unidades_caja INTEGER,
-            total_unidades INTEGER,
-            descarte_unidades INTEGER,
-            motivo_descarte TEXT,
-            control_tension TEXT,
-            control_visual TEXT,
-            observaciones TEXT
+            total INTEGER,
+            descarte REAL,
+            motivo TEXT,
+            tension TEXT,
+            visual TEXT,
+            obs TEXT
         )
     ''')
-
+    
+    
     conn.commit()
     conn.close()
+
+def obtener_empleados_activos():
+        """Lee la tabla de credenciales y devuelve una lista para los selectbox"""
+        conn = sqlite3.connect(RUTAS["lab"])
+        cursor = conn.cursor()
+        try:
+            # Traemos solo a los empleados que están activos
+            cursor.execute("SELECT legajo, nombre FROM credenciales_empleados WHERE estado='activo'")
+            filas = cursor.fetchall()
+            # Formato: "1234 - Juan Perez"
+            opciones = [f"{str(f[0]).strip()} - {str(f[1]).strip()}" for f in filas]
+            return sorted(opciones) if opciones else ["-"]
+        except Exception as e:
+            return ["-"]
+        finally:
+            conn.close()
+
+def validar_pin_operario(legajo, pin_ingresado):
+    """Verifica en la BD si el PIN corresponde al legajo activo"""
+    if not legajo or not pin_ingresado:
+        return False
+    
+    conn = sqlite3.connect(RUTAS["lab"])
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT pin FROM credenciales_empleados WHERE legajo=? AND estado='activo'", (legajo,))
+        resultado = cursor.fetchone()
+        
+        # Comparamos el PIN guardado con el que escribió el usuario
+        if resultado and str(resultado[0]).strip() == str(pin_ingresado).strip():
+            return True
+        return False
+    except:
+        return False
+    finally:
+        conn.close()

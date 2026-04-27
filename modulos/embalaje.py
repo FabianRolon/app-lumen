@@ -3,177 +3,149 @@ import sqlite3
 import pandas as pd
 from datetime import datetime
 from config import RUTAS
+from utils.db_helpers import obtener_empleados_activos, validar_pin_operario
+from utils.data_core import cargar_asistencia
 
-# --- FUNCIONES DE BASE DE DATOS ---
-
-def guardar_control_horario(datos):
+# --- MOTORES DE BASE DE DATOS ---
+def guardar_embalaje(datos):
     try:
         conn = sqlite3.connect(RUTAS["lab"])
         cursor = conn.cursor()
-        # Crea la tabla automáticamente si no existe en la base de datos
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS embalaje_controles_horarios (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                fecha TEXT,
-                hora TEXT,
-                maquina TEXT,
-                op TEXT,
-                embalador TEXT,
-                tension TEXT,
-                visual TEXT,
-                obs TEXT
-            )
-        ''')
-        cursor.execute(''' 
-            INSERT INTO embalaje_controles_horarios 
-            (fecha, hora, maquina, op, embalador, tension, visual, obs) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?) 
+            INSERT INTO registro_embalaje 
+            (fecha, hora, turno, maquina, op, producto, embalador, cajas, unidades_caja, total, descarte, motivo, tension, visual, obs) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', datos)
         conn.commit()
         conn.close()
         return True
     except Exception as e:
-        st.error(f"Error al guardar control horario: {e}")
+        st.error(f"Error al guardar: {e}")
         return False
 
-def guardar_cierre_embalaje(datos):
+def cargar_historial_embalaje(maquina, op, fecha):
+    conn = sqlite3.connect(RUTAS["lab"])
+    df = pd.read_sql_query('''
+        SELECT hora as Hora, embalador as Legajo, cajas as Cajas, unidades_caja as "U/Caja", descarte as "Desc(Kg)"
+        FROM registro_embalaje 
+        WHERE maquina=? AND op=? AND fecha=? ORDER BY hora DESC
+    ''', conn, params=(maquina, op, fecha))
+    conn.close()
+    return df
+
+def cerrar_embalaje(maquina, op, fecha):
     try:
         conn = sqlite3.connect(RUTAS["lab"])
         cursor = conn.cursor()
-        # Crea la tabla automáticamente si no existe en la base de datos
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS embalaje_cierre_turno (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                fecha TEXT,
-                turno TEXT,
-                maquina TEXT,
-                op TEXT,
-                producto TEXT,
-                embalador TEXT,
-                cajas INTEGER,
-                unidades_caja INTEGER,
-                total INTEGER,
-                descarte REAL,
-                motivo TEXT,
-                obs TEXT
-            )
-        ''')
-        cursor.execute(''' 
-            INSERT INTO embalaje_cierre_turno 
-            (fecha, turno, maquina, op, producto, embalador, cajas, unidades_caja, total, descarte, motivo, obs) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) 
-        ''', datos)
+            UPDATE registro_embalaje SET estado = 'CERRADO' 
+            WHERE maquina = ? AND op = ? AND fecha = ?
+        ''', (maquina, op, fecha))
         conn.commit()
         conn.close()
         return True
-    except Exception as e:
-        st.error(f"Error al guardar cierre de embalaje: {e}")
-        return False
-
-def cargar_controles_hoy(maquina, op, fecha):
-    try:
-        conn = sqlite3.connect(RUTAS["lab"])
-        df = pd.read_sql_query(f'''
-            SELECT hora as HORA, embalador as LEGAJO, tension as TENSION, visual as VISUAL, obs as OBS 
-            FROM embalaje_controles_horarios 
-            WHERE maquina='{maquina}' AND op='{op}' AND fecha='{fecha}' 
-            ORDER BY hora DESC
-        ''', conn)
-        conn.close()
-        return df
     except:
-        return pd.DataFrame() # Si la tabla no existe aún, devuelve dataframe vacío
+        return False
 
 # --- INTERFAZ VISUAL ---
-
-def interfaz_embalaje(maquina, datos_orden):
-    st.markdown(f"### 📦 Módulo de Embalaje - {maquina}")
+def interfaz_embalaje(maquina, op_actual, prod_actual):
+    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
     
-    # 1. Extraer datos de la orden activa con seguridad (Manejo de nulos)
-    if not datos_orden.empty:
-        fila = datos_orden.iloc[0]
-        op_activa = str(fila.get("LOTE_LUMEN", "-")).replace(".0", "").strip()
-        # Busca DESCRIP, si no está usa ARTICULO, si no, un guión.
-        producto_activo = str(fila.get("DESCRIP", fila.get("ARTICULO", "-"))).strip()
+    # --- 1. ARREGLO DE OPERARIOS ---
+    # Protegemos la consulta para asegurarnos de que nunca falle y siempre tenga el "-"
+    operarios_db = cargar_asistencia()
+    if not operarios_db.empty:
+            # Extraemos los legajos, quitamos nulos y los convertimos a texto limpio
+            lista_operarios = operarios_db['LEGAJO'].dropna().unique().tolist()
+            lista_operarios = [str(int(x)) for x in lista_operarios]
     else:
-        op_activa = "-"
-        producto_activo = "-"
+        lista_operarios = []
 
-    st.info(f"**Orden Activa:** {op_activa} | **Producto:** {producto_activo}")
+    try:
+        conn = sqlite3.connect(RUTAS["lab"])
+        # Traemos legajo y nombre de la tabla de credenciales
+        df_credenciales = pd.read_sql_query("SELECT legajo, nombre FROM credenciales_empleados", conn)
+        conn.close()
 
-    # 2. Dividimos el módulo en las dos instancias del mundo real
-    tab_ctrl, tab_cierre = st.tabs(["⏱️ Controles por Hora", "📊 Cierre de Embalaje (Turno)"])
-    fecha_actual = datetime.now().strftime("%Y-%m-%d")
+        if not df_credenciales.empty:
+            # Combinamos las columnas para armar el formato "1234 - Juan Perez"
+            lista_operarios = (df_credenciales['legajo'].astype(str) + " - " + df_credenciales['nombre']).tolist()
+    except Exception as e:
+        st.error(f"Error al cargar credenciales: {e}")
 
-    # ==========================================
-    # PESTAÑA 1: CONTROLES POR HORA
-    # ==========================================
-    with tab_ctrl:
-        st.markdown("#### Registro de Calidad en Línea")
-        col_form, col_hist = st.columns([1, 1])
-        
-        with col_form:
-            with st.form(key=f"form_ctrl_{maquina}"):
-                embalador_ctrl = st.text_input("Nº Embalador / Legajo", key=f"leg_ctrl_{maquina}")
+    st.markdown("#### Registro Horario de Embalaje")
+    col_form, col_hist = st.columns([3, 2])
+    
+    with col_form:
+        with st.container(border=True):
+            # 1. FORMULARIO DE CONTROL HORARIO
+            with st.form(f"form_embalaje_{maquina}", clear_on_submit=True):
                 
-                st.markdown("**Inspección**")
-                tension = st.radio("Tensión (Polariscopio)", ["Conforme", "No Conforme"], horizontal=True)
-                visual = st.radio("Control Visual", ["Conforme", "No Conforme"], horizontal=True)
+                # --- 2. VOLAMOS LA HORA ---
+                # Pasamos de 4 a 3 columnas
+                c1, c2, c3 = st.columns([2, 1, 1])
+                with c1: embalador = st.selectbox("🧑‍🔧 Legajo Embalador", options=["Seleccionar..."] + lista_operarios)
+                with c2: pin_emb = st.text_input("🔑 PIN", type="password")
+                with c3: cajas = st.number_input("Cajas", min_value=0, step=1)
+                    
+                c5, c6 = st.columns(2)
+                with c5: unidades_caja = st.number_input("Unidades por Caja", min_value=0, step=1)
+                with c6: descarte = st.number_input("Descarte (Kg)", min_value=0.0, step=0.1)
+
+                st.markdown("**🔍 Inspección de Calidad (Tubos)**")
+                col_ctrl1, col_ctrl2, col_ctrl3 = st.columns(3)
+                with col_ctrl1: tension = st.selectbox("Tensión / Polariscopio", ["OK", "Rechazo", "-"])
+                with col_ctrl2: visual = st.selectbox("Inspección Visual", ["OK", "Rechazo", "-"])
+                with col_ctrl3: motivo_desc = st.text_input("Motivo Descarte")
+
+                obs = st.text_input("Observaciones")
                 
-                obs_ctrl = st.text_input("Observaciones (Opcional)", key=f"obs_ctrl_{maquina}")
-                
-                submit_ctrl = st.form_submit_button("💾 Guardar Control Horario", use_container_width=True)
-                
-                if submit_ctrl:
-                    if not embalador_ctrl:
-                        st.warning("⚠️ Ingrese su legajo para firmar el control.")
+                if st.form_submit_button("💾 Guardar Control", use_container_width=True):
+                    if embalador == "-":
+                        st.warning("⚠️ Debes seleccionar un operario válido.")
                     else:
-                        hora_actual = datetime.now().strftime("%H:%M:%S")
-                        datos_ctrl = (fecha_actual, hora_actual, maquina, op_activa, embalador_ctrl, tension, visual, obs_ctrl)
-                        if guardar_control_horario(datos_ctrl):
-                            st.success("✅ Control guardado correctamente.")
-                            st.rerun()
+                        legajo_limpio = embalador.split(" - ")[0]
+                        
+                        # --- VALIDACIÓN DE PIN ---
+                        if validar_pin_operario(legajo_limpio, pin_emb):
+                            
+                            # --- 3. HORA AUTOMÁTICA DEL SISTEMA ---
+                            hora_str = datetime.now().strftime("%H:%M:%S")
 
-        with col_hist:
-            df_hist = cargar_controles_hoy(maquina, op_activa, fecha_actual)
-            if not df_hist.empty:
-                st.dataframe(df_hist, use_container_width=True, hide_index=True)
-            else:
-                st.info("No hay controles registrados hoy para esta orden.")
+                            # Calculamos el total (si no lo tenías ya calculado más arriba en tu interfaz)
+                            total_unidades = cajas * unidades_caja
+                            
+                            datos_insert = (fecha_hoy, hora_str, maquina, op_actual, prod_actual, legajo_limpio, cajas, unidades_caja, total_unidades, descarte, motivo_desc, tension, visual, obs)
+                            if guardar_embalaje(datos_insert):
+                                st.rerun()
+                        else:
+                            st.error("❌ PIN incorrecto. Intenta de nuevo.")
 
-    # ==========================================
-    # PESTAÑA 2: CIERRE DE TURNO
-    # ==========================================
-    with tab_cierre:
-        st.markdown("#### Informe Final (Cantidades y Descarte)")
-        with st.form(key=f"form_cierre_{maquina}"):
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                turno = st.selectbox("Turno", ["Mañana", "Tarde", "Noche"])
-                embalador_cierre = st.text_input("Nº Embalador / Legajo", key=f"leg_cierre_{maquina}")
-            with c2:
-                cajas = st.number_input("Cajas Armadas", min_value=0, step=1)
-                unidades_caja = st.number_input("Unidades por Caja", min_value=0, step=1)
-            with c3:
-                descarte = st.number_input("Descarte (Kg o Unidades)", min_value=0.0, step=0.1)
-                motivo = st.text_input("Motivo del Descarte")
-
-            obs_cierre = st.text_area("Observaciones generales del turno")
-            
-            submit_cierre = st.form_submit_button("💾 Guardar Cierre de Embalaje", use_container_width=True, type="primary")
-
-            if submit_cierre:
-                if not embalador_cierre:
-                    st.warning("⚠️ Por favor, ingrese el legajo del embalador.")
-                elif cajas == 0:
-                    st.warning("⚠️ La cantidad de cajas armadas debe ser mayor a 0 para el cierre.")
-                else:
-                    total_unidades = cajas * unidades_caja
-                    datos_cierre = (
-                        fecha_actual, turno, maquina, op_activa, producto_activo, 
-                        embalador_cierre, cajas, unidades_caja, total_unidades, 
-                        descarte, motivo, obs_cierre
-                    )
-                    if guardar_cierre_embalaje(datos_cierre):
-                        st.success(f"✅ ¡Cierre de turno guardado! Total embalado: **{total_unidades}** unidades.")
-                        # No hacemos rerun de inmediato para que puedan leer el mensaje de éxito y ver el cálculo total
+            # 2. CIERRE DE LÍNEA DE EMBALAJE
+            st.markdown("---")
+            c_pin1, c_pin2, c_pin3 = st.columns([2, 1, 1])
+            with c_pin1: 
+                pin_cierre_sel = st.selectbox("🔒 Supervisor Cierre", lista_operarios, key=f"cierre_{maquina}")
+            with c_pin2:
+                pin_cierre_pass = st.text_input("🔑 PIN", type="password", key=f"c_pass_{maquina}")
+            with c_pin3:
+                st.write("") 
+                if st.button("🛑 CERRAR OP", type="primary", use_container_width=True):
+                    if pin_cierre_sel == "-":
+                        st.warning("⚠️ Selecciona un supervisor.")
+                    else:
+                        legajo_cierre = pin_cierre_sel.split(" - ")[0]
+                        if validar_pin_operario(legajo_cierre, pin_cierre_pass):
+                            if cerrar_embalaje(maquina, op_actual, fecha_hoy):
+                                st.success(f"✅ La orden {op_actual} ha sido cerrada.")
+                                st.rerun()
+                        else:
+                            st.error("❌ PIN incorrecto.")
+                    
+    # MOSTRAR EL HISTORIAL DEL DÍA
+    with col_hist:
+        df_hist = cargar_historial_embalaje(maquina, op_actual, fecha_hoy)
+        if not df_hist.empty:
+            st.dataframe(df_hist, use_container_width=True, hide_index=True)
+        else:
+            st.info("Aún no hay cajas registradas para esta orden.")
