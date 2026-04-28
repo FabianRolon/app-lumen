@@ -1,5 +1,7 @@
 import sqlite3
 from config import RUTAS
+import streamlit as st
+import pandas
 
 def inicializar_db():
     conn = sqlite3.connect(RUTAS["lab"])
@@ -124,39 +126,54 @@ def inicializar_db():
     
     conn.commit()
     conn.close()
-
-def obtener_empleados_activos():
-        """Lee la tabla de credenciales y devuelve una lista para los selectbox"""
+    
+@st.cache_data(ttl=600)  # Se actualiza cada 10 minutos
+def obtener_operarios_habilitados():
+    """Trae legajo y nombre de los operarios con PIN configurado."""
+    try:
         conn = sqlite3.connect(RUTAS["lab"])
-        cursor = conn.cursor()
-        try:
-            # Traemos solo a los empleados que están activos
-            cursor.execute("SELECT legajo, nombre FROM credenciales_empleados WHERE estado='activo'")
-            filas = cursor.fetchall()
-            # Formato: "1234 - Juan Perez"
-            opciones = [f"{str(f[0]).strip()} - {str(f[1]).strip()}" for f in filas]
-            return sorted(opciones) if opciones else ["-"]
-        except Exception as e:
-            return ["-"]
-        finally:
-            conn.close()
+        # Traemos solo los que tienen un PIN cargado (asumiendo que la columna es 'pin')
+        query = "SELECT legajo, nombre FROM credenciales_empleados WHERE pin IS NOT NULL AND pin != ''"
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        
+        if df.empty:
+            return []
+            
+        # Formato: "101 - Juan Perez"
+        return (df['legajo'].astype(str) + " - " + df['nombre']).tolist()
+    except Exception as e:
+        st.error(f"Error al cargar operarios: {e}")
+        return []
+    
 
 def validar_pin_operario(legajo, pin_ingresado):
-    """Verifica en la BD si el PIN corresponde al legajo activo"""
+    """
+    Valida el PIN del operario buscando en la tabla credenciales_empleados.
+    Compara como cadenas de texto limpias.
+    """
     if not legajo or not pin_ingresado:
         return False
-    
-    conn = sqlite3.connect(RUTAS["lab"])
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT pin FROM credenciales_empleados WHERE legajo=? AND estado='activo'", (legajo,))
-        resultado = cursor.fetchone()
         
-        # Comparamos el PIN guardado con el que escribió el usuario
-        if resultado and str(resultado[0]).strip() == str(pin_ingresado).strip():
-            return True
-        return False
-    except:
-        return False
-    finally:
+    try:
+        legajo_str = str(legajo).replace(".0", "").strip()
+        
+        conn = sqlite3.connect(RUTAS["lab"])
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT pin FROM credenciales_empleados WHERE legajo = ? OR legajo = ?", (legajo_str, int(legajo_str) if legajo_str.isdigit() else legajo_str))
+        resultado = cursor.fetchone()
         conn.close()
+
+        if resultado and resultado[0] is not None:
+            pin_bd = str(resultado[0]).replace(".0", "").strip()
+            pin_ingresado_str = str(pin_ingresado).strip()
+            
+            if pin_bd == pin_ingresado_str:
+                return True
+                
+        return False
+        
+    except Exception as e:
+        print(f"Error SQL validando PIN: {e}")
+        return False

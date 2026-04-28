@@ -3,7 +3,7 @@ import sqlite3
 import pandas as pd
 from datetime import datetime
 from config import RUTAS
-from utils.db_helpers import obtener_empleados_activos, validar_pin_operario
+from utils.db_helpers import obtener_operarios_habilitados, validar_pin_operario
 from utils.data_core import cargar_asistencia
 
 # --- MOTORES DE BASE DE DATOS ---

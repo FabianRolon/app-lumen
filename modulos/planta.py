@@ -4,7 +4,7 @@ import sqlite3
 import pandas as pd
 from config import RUTAS, MAQUINAS
 from modulos.embalaje import interfaz_embalaje
-from utils.db_helpers import obtener_operarios_habilitados, validar_pin_operario
+from utils.db_helpers import validar_pin_operario
 
 # --- MOTORES DE BASE DE DATOS ---
 
@@ -106,7 +106,23 @@ def guardar_maquina_tubo(datos):
 def renderizar_planta(df_st, df_prod):
     st.title("🏭 Sector Producción (Producción y Calidad)")
     fecha_hoy = datetime.datetime.now().strftime("%Y-%m-%d")
-    lista_operarios = obtener_operarios_habilitados()
+    
+    # --- CARGA DE OPERARIOS DESDE CREDENCIALES ---
+    lista_operarios = ["-"]
+    try:
+        conn = sqlite3.connect(RUTAS["lab"])
+        # Sacamos el WHERE estado='Activo' para ver si trae la lista completa
+        df_credenciales = pd.read_sql_query("SELECT legajo, nombre FROM credenciales_empleados", conn)
+        conn.close()
+
+        if not df_credenciales.empty:
+            operarios_format = (df_credenciales['legajo'].astype(str) + " - " + df_credenciales['nombre']).tolist()
+            lista_operarios.extend(operarios_format)
+        else:
+            st.warning("⚠️ La tabla credenciales_empleados parece estar vacía o no tiene registros.")
+    except Exception as e:
+        st.error(f"Error SQL al cargar credenciales: {e}")
+
     with st.container(border=True):
         col_m1, col_m2 = st.columns([1, 3])
         with col_m1:
@@ -208,9 +224,10 @@ def renderizar_planta(df_st, df_prod):
                 c9 = st.checkbox("Apto para liberación")
             
             st.markdown("---")
-            col_f1, col_f2 = st.columns(2)
+            col_f1, col_col2 = st.columns(2)
+            
             with col_f1: pin_sel = st.selectbox("👷 Operario Autorizante", lista_operarios, key="pin_lib")
-            with col_f2: pin_pass = st.text_input("🔑 PIN", type="password", key="pin_lib_pass")
+            with col_col2: pin_pass = st.text_input("🔑 PIN", type="password", key="pin_lib_pass")
             
             todos = all([c1,c2,c3,c4,c5,c6,c7,c8,c9])
             if st.button("✍️ FIRMAR LIBERACIÓN", type="primary", disabled=not todos, use_container_width=True):
