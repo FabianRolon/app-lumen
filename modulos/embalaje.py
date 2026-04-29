@@ -2,150 +2,238 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 from datetime import datetime
-from config import RUTAS
 from utils.db_helpers import obtener_operarios_habilitados, validar_pin_operario
-from utils.data_core import cargar_asistencia
+from config import RUTAS
 
-# --- MOTORES DE BASE DE DATOS ---
-def guardar_embalaje(datos):
+# --- MOTOR DE BASE DE DATOS ---
+
+def guardar_registro_clt02(datos):
     try:
         conn = sqlite3.connect(RUTAS["lab"])
         cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO registro_embalaje 
-            (fecha, hora, turno, maquina, op, producto, embalador, cajas, unidades_caja, total, descarte, motivo, tension, visual, obs) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        
+        # 1. Creamos la tabla limpia (sin los campos de cajas/producción)
+        cursor.execute(''' 
+            CREATE TABLE IF NOT EXISTS registro_clt02 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fecha TEXT, 
+                maquina TEXT, 
+                op TEXT, 
+                producto TEXT,
+                embalador TEXT, 
+                c_medidas TEXT, 
+                c_impresion TEXT, 
+                c_tensiones TEXT, 
+                c_aspecto TEXT,
+                obs TEXT
+            )
+        ''')
+        
+        # 2. El INSERT ahora solo tiene 10 campos para coincidir con tus datos
+        cursor.execute(''' 
+            INSERT INTO registro_clt02 
+            (fecha, maquina, op, producto, embalador, 
+             c_medidas, c_impresion, c_tensiones, c_aspecto, obs) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) 
         ''', datos)
+        
         conn.commit()
         conn.close()
         return True
     except Exception as e:
-        st.error(f"Error al guardar: {e}")
+        st.error(f"Error al guardar CLT02: {e}")
         return False
 
-def cargar_historial_embalaje(maquina, op, fecha):
+def obtener_historial_clt02(maquina):
+    try:
+        conn = sqlite3.connect(RUTAS["lab"])
+        # Volvemos a poner el WHERE, pero ajustando la fecha a formato Día/Mes/Año
+        query = f"""
+            SELECT fecha, maquina, op, producto, 
+                   c_medidas as MEDIDAS, c_impresion as IMPRESION, c_aspecto as ASPECTO, obs as OBSERVACIONES 
+            FROM registro_clt02 
+            WHERE maquina = '{maquina}' AND fecha = '{datetime.now().strftime('%d/%m/%Y')}' 
+            ORDER BY id DESC
+        """
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        return df
+    except Exception as e:
+        st.error(f"Error al buscar historial CLT02: {e}") 
+        return pd.DataFrame()
+    
+def guardar_registro_ide07(datos):   
+    try:
+        # Nos conectamos a la base de datos configurada
+        conn = sqlite3.connect(RUTAS["lab"])
+        cursor = conn.cursor()
+        
+        # Insertamos los 14 datos en el orden exacto del formulario
+        cursor.execute(''' 
+            INSERT INTO registro_embalaje (
+                fecha, turno, maquina, op, producto, embalador, 
+                cajas, unidades_caja, total, descarte, motivo, 
+                tension, visual, obs
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) 
+        ''', datos)
+        
+        conn.commit()
+        conn.close()
+        return True
+        
+    except Exception as e:
+        # Si algo falla, lo mostramos en pantalla sin que se rompa la app
+        st.error(f"❌ Error al guardar el informe IDE 07: {e}")
+        return False
+    
+def obtener_historial_ide07(maquina):    
     conn = sqlite3.connect(RUTAS["lab"])
-    df = pd.read_sql_query('''
-        SELECT hora as Hora, embalador as Legajo, cajas as Cajas, unidades_caja as "U/Caja", descarte as "Desc(Kg)"
+    query = """
+        SELECT fecha as FECHA, turno as TURNO, embalador as OPERARIO, 
+               producto as PRODUCTO, cajas as CAJAS, total as TOTAL_UNIDADES, 
+               descarte as DESCARTE
         FROM registro_embalaje 
-        WHERE maquina=? AND op=? AND fecha=? ORDER BY hora DESC
-    ''', conn, params=(maquina, op, fecha))
+        WHERE maquina = ? 
+        ORDER BY id DESC LIMIT 5
+    """
+    df = pd.read_sql_query(query, conn, params=(maquina,))
     conn.close()
     return df
 
-def cerrar_embalaje(maquina, op, fecha):
-    try:
-        conn = sqlite3.connect(RUTAS["lab"])
-        cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE registro_embalaje SET estado = 'CERRADO' 
-            WHERE maquina = ? AND op = ? AND fecha = ?
-        ''', (maquina, op, fecha))
-        conn.commit()
-        conn.close()
-        return True
-    except:
-        return False
 
-# --- INTERFAZ VISUAL ---
-def interfaz_embalaje(maquina, op_actual, prod_actual):
-    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+# --- INTERFAZ DE USUARIO ---
+
+def interfaz_embalaje(maquina, lote, producto):
+    st.markdown("### 📦 Control de Embalaje - Formulario CLT02")
     
-    # --- 1. ARREGLO DE OPERARIOS ---
-    # Protegemos la consulta para asegurarnos de que nunca falle y siempre tenga el "-"
-    operarios_db = cargar_asistencia()
-    if not operarios_db.empty:
-            # Extraemos los legajos, quitamos nulos y los convertimos a texto limpio
-            lista_operarios = operarios_db['LEGAJO'].dropna().unique().tolist()
-            lista_operarios = [str(int(x)) for x in lista_operarios]
-    else:
-        lista_operarios = []
+    # Cabecera informativa
+    st.info(f"**Máquina:** {maquina} | **Lote/OP:** {lote} | **Producto:** {producto}")
 
-    try:
-        conn = sqlite3.connect(RUTAS["lab"])
-        # Traemos legajo y nombre de la tabla de credenciales
-        df_credenciales = pd.read_sql_query("SELECT legajo, nombre FROM credenciales_empleados", conn)
-        conn.close()
+    lista_operarios = obtener_operarios_habilitados()
+    opciones_check = ["Conforme", "No Conforme"]
+    opciones_check_1 = ["Conforme", "No Conforme", "N/A"]
 
-        if not df_credenciales.empty:
-            # Combinamos las columnas para armar el formato "1234 - Juan Perez"
-            lista_operarios = (df_credenciales['legajo'].astype(str) + " - " + df_credenciales['nombre']).tolist()
-    except Exception as e:
-        st.error(f"Error al cargar credenciales: {e}")
+    # 📑 Creamos las pestañas a nivel de diseño, NO dentro del formulario
+    tab_prod, tab_cc = st.tabs(["📦 Producción (IDE07)", "🧪 Calidad (CLT02)"])
 
-    st.markdown("#### Registro Horario de Embalaje")
-    col_form, col_hist = st.columns([3, 2])
-    
-    with col_form:
-        with st.container(border=True):
-            # 1. FORMULARIO DE CONTROL HORARIO
-            with st.form(f"form_embalaje_{maquina}", clear_on_submit=True):
-                
-                # --- 2. VOLAMOS LA HORA ---
-                # Pasamos de 4 a 3 columnas
-                c1, c2, c3 = st.columns([2, 1, 1])
-                with c1: embalador = st.selectbox("🧑‍🔧 Legajo Embalador", options=["Seleccionar..."] + lista_operarios)
-                with c2: pin_emb = st.text_input("🔑 PIN", type="password")
-                with c3: cajas = st.number_input("Cajas", min_value=0, step=1)
-                    
-                c5, c6 = st.columns(2)
-                with c5: unidades_caja = st.number_input("Unidades por Caja", min_value=0, step=1)
-                with c6: descarte = st.number_input("Descarte (Kg)", min_value=0.0, step=0.1)
+    # ==========================================
+    # 📦 FORMULARIO 1: PRODUCCIÓN Y DESCARTE (IDE07)
+    # ==========================================
+    with tab_prod:
+        with st.form(f"form_ide07_{maquina}", clear_on_submit=True):
+            st.markdown("#### Informe de Embalaje y Descarte")
+            
+            p1, p2, p3 = st.columns(3)
+            with p1:
+                # Agregamos 'key' únicos para evitar choques con el otro formulario
+                embalador_sel = st.selectbox("👷‍♂️ Embalador", lista_operarios, key=f"emb_ide07_{maquina}")
+                cajas = st.number_input("Packs Armados", min_value=0, step=1, key=f"cajas_ide07_{maquina}")
+            with p2:
+                unidades_caja = st.number_input("Frascos x Pack", min_value=0, step=1, key=f"uni_ide07_{maquina}")
+                descarte = st.number_input("Descarte (Kg)", min_value=0, step=1, key=f"desc_ide07_{maquina}")
+            with p3:
+                motivo = st.selectbox("Motivo Descarte", ["-", "Rotura", "Manchas", "Falla Impresión", "Mal Formado", "Otro"], key=f"mot_ide07_{maquina}")
+                obs = st.text_area("Observaciones del turno", key=f"obs_ide07_{maquina}")
 
-                st.markdown("**🔍 Inspección de Calidad (Tubos)**")
-                col_ctrl1, col_ctrl2, col_ctrl3 = st.columns(3)
-                with col_ctrl1: tension = st.selectbox("Tensión / Polariscopio", ["OK", "Rechazo", "-"])
-                with col_ctrl2: visual = st.selectbox("Inspección Visual", ["OK", "Rechazo", "-"])
-                with col_ctrl3: motivo_desc = st.text_input("Motivo Descarte")
-
-                obs = st.text_input("Observaciones")
-                
-                if st.form_submit_button("💾 Guardar Control", use_container_width=True):
-                    if embalador == "-":
-                        st.warning("⚠️ Debes seleccionar un operario válido.")
-                    else:
-                        legajo_limpio = embalador.split(" - ")[0]
-                        
-                        # --- VALIDACIÓN DE PIN ---
-                        if validar_pin_operario(legajo_limpio, pin_emb):
-                            
-                            # --- 3. HORA AUTOMÁTICA DEL SISTEMA ---
-                            hora_str = datetime.now().strftime("%H:%M:%S")
-
-                            # Calculamos el total (si no lo tenías ya calculado más arriba en tu interfaz)
-                            total_unidades = cajas * unidades_caja
-                            
-                            datos_insert = (fecha_hoy, hora_str, maquina, op_actual, prod_actual, legajo_limpio, cajas, unidades_caja, total_unidades, descarte, motivo_desc, tension, visual, obs)
-                            if guardar_embalaje(datos_insert):
-                                st.rerun()
-                        else:
-                            st.error("❌ PIN incorrecto. Intenta de nuevo.")
-
-            # 2. CIERRE DE LÍNEA DE EMBALAJE
             st.markdown("---")
-            c_pin1, c_pin2, c_pin3 = st.columns([2, 1, 1])
-            with c_pin1: 
-                pin_cierre_sel = st.selectbox("🔒 Supervisor Cierre", lista_operarios, key=f"cierre_{maquina}")
-            with c_pin2:
-                pin_cierre_pass = st.text_input("🔑 PIN", type="password", key=f"c_pass_{maquina}")
-            with c_pin3:
+            
+            # 🔐 Zona de validación y guardado IDE07
+            col_firma1, col_firma2 = st.columns([1, 2])
+            with col_firma1:
+                pin_ide07 = st.text_input("🔑 PIN de Firma", type="password", key=f"pin_ide07_{maquina}")
+            with col_firma2:
                 st.write("") 
-                if st.button("🛑 CERRAR OP", type="primary", use_container_width=True):
-                    if pin_cierre_sel == "-":
-                        st.warning("⚠️ Selecciona un supervisor.")
-                    else:
-                        legajo_cierre = pin_cierre_sel.split(" - ")[0]
-                        if validar_pin_operario(legajo_cierre, pin_cierre_pass):
-                            if cerrar_embalaje(maquina, op_actual, fecha_hoy):
-                                st.success(f"✅ La orden {op_actual} ha sido cerrada.")
-                                st.rerun()
-                        else:
-                            st.error("❌ PIN incorrecto.")
+                st.write("")
+                submit_ide07 = st.form_submit_button("💾 Validar y Guardar IDE07")
+
+            if submit_ide07:
+                legajo_ide07 = str(embalador_sel).split("-")[0].strip()
+                
+                if not validar_pin_operario(legajo_ide07, pin_ide07):
+                    st.error("❌ PIN Incorrecto. El registro IDE07 no fue firmado.")
+                elif cajas == 0 and descarte == 0:
+                    st.warning("⚠️ Debe ingresar producción o descarte para guardar.")
+                else:
+                    ahora = datetime.now()
+                    total_ok = cajas * unidades_caja
                     
-    # MOSTRAR EL HISTORIAL DEL DÍA
-    with col_hist:
-        df_hist = cargar_historial_embalaje(maquina, op_actual, fecha_hoy)
-        if not df_hist.empty:
-            st.dataframe(df_hist, use_container_width=True, hide_index=True)
+                    # Datos exclusivos para la DB de Producción
+                    datos_ide07 = (
+                        ahora.strftime("%Y-%m-%d"), ahora.strftime("%H:%M:%S"),
+                        maquina, lote, producto, legajo_ide07,
+                        cajas, unidades_caja, total_ok, descarte, motivo, obs
+                    )
+                    
+                    # Deberás crear/asegurar que exista esta función específica
+                    if guardar_registro_ide07(datos_ide07):
+                        st.success("✅ Formulario IDE07 Guardado y Firmado.")
+                        st.rerun()
+
+        # Historial visible solo para IDE07 dentro de su pestaña
+        st.markdown(f"##### 📋 Últimos Registros IDE07 - {maquina}")
+        historial_ide07 = obtener_historial_ide07(maquina)
+        if not historial_ide07.empty:
+            st.dataframe(historial_ide07, use_container_width=True, hide_index=True)
         else:
-            st.info("Aún no hay cajas registradas para esta orden.")
+            st.caption("No hay registros IDE07 cargados en este turno.")
+
+
+    # ==========================================
+    # 🧪 FORMULARIO 2: CONTROLES DE CALIDAD (CLT02)
+    # ==========================================
+    with tab_cc:
+        with st.form(f"form_clt02_{maquina}", clear_on_submit=True):
+            st.markdown("#### Control de Calidad de Fin de Línea")
+            
+            # El inspector podría ser distinto al embalador, le damos su propio campo
+            inspector_sel = st.selectbox("👷‍♂️ Inspector / Embalador", lista_operarios, key=f"insp_clt02_{maquina}")
+            
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                check_medidas = st.radio("📏 Medidas", opciones_check, horizontal=True, key=f"chk_med_{maquina}")
+            with c2:
+                check_impresion = st.radio("🎨 Impresión", opciones_check_1, horizontal=True, key=f"chk_imp_{maquina}")
+            with c3:
+                check_tensiones = st.radio("⚡ Tensiones", opciones_check, horizontal=True, key=f"chk_ten_{maquina}")
+            with c4:
+                check_aspecto = st.radio("👁️ Aspecto Gral.", opciones_check, horizontal=True, key=f"chk_asp_{maquina}")
+
+            st.markdown("---")
+            obs = st.text_area("Observaciones del turno", key=f"obs_clt02_{maquina}")
+            st.markdown("---")
+            
+            # 🔐 Zona de validación y guardado CLT02
+            col_firma1, col_firma2 = st.columns([1, 2])
+            with col_firma1:
+                pin_clt02 = st.text_input("🔑 PIN de Firma", type="password", key=f"pin_clt02_{maquina}")
+            with col_firma2:
+                st.write("") 
+                st.write("")
+                submit_clt02 = st.form_submit_button("💾 Validar y Guardar CLT02")
+
+            if submit_clt02:
+                legajo_clt02 = str(inspector_sel).split("-")[0].strip()
+                
+                if not validar_pin_operario(legajo_clt02, pin_clt02):
+                    st.error("❌ PIN Incorrecto. El registro CLT02 no fue firmado.")
+                else:
+                    ahora = datetime.now()
+                    
+                    # Datos exclusivos para la DB de Calidad
+                    datos_clt02 = (
+                        (datetime.now().strftime("%d/%m/%Y %H:%M")),
+                        maquina, inspector_sel, producto, legajo_clt02,
+                        check_medidas, check_impresion, check_tensiones, check_aspecto, obs
+                    )
+                    
+                    if guardar_registro_clt02(datos_clt02):
+                        st.success("✅ Formulario CLT02 Guardado y Firmado.")
+                        st.rerun()
+
+        # Historial visible solo para CLT02 dentro de su pestaña
+        st.markdown(f"##### 📋 Últimos Registros CLT02 - {maquina}")
+        historial_clt02 = obtener_historial_clt02(maquina)
+        if not historial_clt02.empty:
+            st.dataframe(historial_clt02, use_container_width=True, hide_index=True)
+        else:
+            st.caption("No hay registros CLT02 cargados en este turno.")

@@ -1,7 +1,7 @@
 import sqlite3
-from config import RUTAS
+import pandas as pd
 import streamlit as st
-import pandas
+from config import RUTAS
 
 def inicializar_db():
     conn = sqlite3.connect(RUTAS["lab"])

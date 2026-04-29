@@ -306,7 +306,7 @@ def renderizar_planta(df_st, df_prod):
 
         else:
             st.success(f"🧪 **MODO VIALES ACTIVADO**")
-            tab_cp, tab_idp, tab_stop, tab_cierre = st.tabs(["📏 Control (CP 71)", "⚖️ Informe (IDP 71)", "⚠️ Paradas", "🏁 Cierre de Turno"])
+            tab_cp, tab_idp, tab_stop, tab_emb, tab_cierre = st.tabs(["📏 Control (CP 71)", "⚖️ Informe (IDP 71)", "⚠️ Paradas", "📦 Embalaje", "🏁 Cierre de Turno"])
             
             with tab_cp:
                 st.markdown("#### Registro de Mediciones (REV 3)")
@@ -388,6 +388,9 @@ def renderizar_planta(df_st, df_prod):
                                 guardar_parada_maquina((fecha_hoy, p_ini.strftime("%H:%M"), p_fin.strftime("%H:%M"), maq_sel, p_causa, p_inter, legajo_limpio))
                                 st.warning("Parada registrada.")
                             else: st.error("❌ PIN incorrecto.")
+
+            with tab_emb:
+                interfaz_embalaje(maq_sel, lote_lumen, nombre_producto_oficial)
 
             with tab_cierre:
                 st.markdown("#### 📊 Balance Final y Cierre")
