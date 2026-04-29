@@ -3,7 +3,7 @@ import datetime
 import sqlite3
 import pandas as pd
 from config import RUTAS, MAQUINAS
-from modulos.embalaje import interfaz_embalaje
+from modulos.embalaje import interfaz_embalaje, validar_registros_pendientes, obtener_pendientes_ide07
 from utils.db_helpers import validar_pin_operario
 
 # --- MOTORES DE BASE DE DATOS ---
@@ -432,3 +432,35 @@ def renderizar_planta(df_st, df_prod):
                                 cerrar_linea(maq_sel, id_lib, fecha_hoy, legajo_limpio)
                                 st.rerun()
                             else: st.error("❌ PIN incorrecto.")
+                st.markdown("#### 🛡️ Validación de Supervisor (ISO 9001)")
+                # Traemos lo que cargaron los embaladores hoy que aún no está firmado
+                df_pendientes = obtener_pendientes_ide07(maq_sel)
+                    
+                if not df_pendientes.empty:
+                    st.warning(f"Hay {len(df_pendientes)} registros esperando validación.")
+                    st.dataframe(df_pendientes.drop(columns=['id']), use_container_width=True, hide_index=True)
+                    
+                    with st.expander("🔐 Firmar y Aprobar todo el lote"):
+                        with st.form("form_validacion_supervisor"):
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                # Usamos la misma lista general de operarios
+                                sup_sel = st.selectbox("Supervisor / Responsable", lista_operarios, key="sup_val_ide07")
+                            with col2:
+                                pin_sup = st.text_input("PIN de Supervisor", type="password", key="pin_val_ide07")
+                            
+                            btn_aprobar = st.form_submit_button("✅ Aprobar Registros", use_container_width=True)
+                            
+                            if btn_aprobar:
+                                legajo_sup = str(sup_sel).split("-")[0].strip()
+                                
+                                # Validamos PIN
+                                if validar_pin_operario(legajo_sup, pin_sup):
+                                    if validar_registros_pendientes(maq_sel, legajo_sup):
+                                        st.success(f"✅ Registros validados por {legajo_sup}.")
+                                        st.rerun()
+                                else:
+                                    st.error("❌ PIN de supervisor incorrecto.")
+                else:
+                    st.success("🙌 No hay registros pendientes de validación para hoy.")
+                

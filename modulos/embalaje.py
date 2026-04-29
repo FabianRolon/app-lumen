@@ -12,11 +12,12 @@ def guardar_registro_clt02(datos):
         conn = sqlite3.connect(RUTAS["lab"])
         cursor = conn.cursor()
         
-        # 1. Creamos la tabla limpia (sin los campos de cajas/producción)
+        # 1. Tabla con fecha y hora separadas
         cursor.execute(''' 
             CREATE TABLE IF NOT EXISTS registro_clt02 (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 fecha TEXT, 
+                hora TEXT,
                 maquina TEXT, 
                 op TEXT, 
                 producto TEXT,
@@ -29,12 +30,12 @@ def guardar_registro_clt02(datos):
             )
         ''')
         
-        # 2. El INSERT ahora solo tiene 10 campos para coincidir con tus datos
+        # 2. INSERT con exactamente 11 campos y 11 signos '?'
         cursor.execute(''' 
             INSERT INTO registro_clt02 
-            (fecha, maquina, op, producto, embalador, 
+            (fecha, hora, maquina, op, producto, embalador, 
              c_medidas, c_impresion, c_tensiones, c_aspecto, obs) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) 
         ''', datos)
         
         conn.commit()
@@ -47,64 +48,112 @@ def guardar_registro_clt02(datos):
 def obtener_historial_clt02(maquina):
     try:
         conn = sqlite3.connect(RUTAS["lab"])
-        # Volvemos a poner el WHERE, pero ajustando la fecha a formato Día/Mes/Año
+        fecha_hoy = datetime.now().strftime('%Y-%m-%d')
         query = f"""
-            SELECT fecha, maquina, op, producto, 
+            SELECT hora as HORA, maquina as MAQUINA, op as OP, producto as PRODUCTO, 
                    c_medidas as MEDIDAS, c_impresion as IMPRESION, c_aspecto as ASPECTO, obs as OBSERVACIONES 
             FROM registro_clt02 
-            WHERE maquina = '{maquina}' AND fecha = '{datetime.now().strftime('%d/%m/%Y')}' 
+            WHERE maquina = '{maquina.strip()}' AND fecha = '{fecha_hoy}' 
             ORDER BY id DESC
         """
         df = pd.read_sql_query(query, conn)
         conn.close()
         return df
     except Exception as e:
+        if "no such table" in str(e):
+            return pd.DataFrame()
         st.error(f"Error al buscar historial CLT02: {e}") 
         return pd.DataFrame()
     
-def guardar_registro_ide07(datos):   
+def guardar_registro_ide07(datos):
     try:
-        # Nos conectamos a la base de datos configurada
         conn = sqlite3.connect(RUTAS["lab"])
         cursor = conn.cursor()
-        
-        # Insertamos los 14 datos en el orden exacto del formulario
         cursor.execute(''' 
-            INSERT INTO registro_embalaje (
-                fecha, turno, maquina, op, producto, embalador, 
-                cajas, unidades_caja, total, descarte, motivo, 
-                tension, visual, obs
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) 
-        ''', datos)
+            CREATE TABLE IF NOT EXISTS registro_ide07 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fecha TEXT, hora TEXT, maquina TEXT, op TEXT, producto TEXT,
+                embalador TEXT, cajas INTEGER, unidades_caja INTEGER, total INTEGER,
+                descarte REAL, motivo TEXT, obs TEXT,
+                sup_valida TEXT, estado TEXT  -- 'PENDIENTE' o 'APROBADO'
+            )
+        ''')
+        # Los datos del operario + sup_valida=None + estado='PENDIENTE'
+        cursor.execute(''' 
+            INSERT INTO registro_ide07 
+            (fecha, hora, maquina, op, producto, embalador, cajas, unidades_caja, 
+             total, descarte, motivo, obs, sup_valida, estado) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) 
+        ''', datos + (None, 'PENDIENTE')) 
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        st.error(f"Error al guardar: {e}")
+        return False
+    
+def obtener_historial_ide07(maquina):
+    try:
+        conn = sqlite3.connect(RUTAS["lab"])
+        fecha_hoy = datetime.now().strftime('%Y-%m-%d')
+        query = f"""
+            SELECT hora as HORA, op as LOTE, embalador as OPERARIO, 
+                   cajas as PACKS, total as TOTAL, descarte as DESC_KG
+            FROM registro_ide07 
+            WHERE maquina = '{maquina}' AND fecha = '{fecha_hoy}' 
+            ORDER BY id DESC
+        """
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        return df
+    except:
+        return pd.DataFrame()
+
+def obtener_pendientes_ide07(maquina):
+    try:
+        conn = sqlite3.connect(RUTAS["lab"])
+        fecha_hoy = datetime.now().strftime('%Y-%m-%d')
+        # Traemos todos los campos que el supervisor necesita revisar
+        query = f"""
+            SELECT id, hora as HORA, op as LOTE, producto as PRODUCTO, 
+                   embalador as OPERARIO, cajas as PACKS, total as TOTAL, 
+                   descarte as DESC_KG, motivo as MOTIVO
+            FROM registro_ide07 
+            WHERE maquina = '{maquina}' 
+              AND fecha = '{fecha_hoy}' 
+              AND estado = 'PENDIENTE'
+            ORDER BY hora ASC
+        """
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        return df
+    except Exception as e:
+        # Si la tabla no existe aún, devolvemos un DataFrame vacío
+        return pd.DataFrame()
+
+def validar_registros_pendientes(maquina, legajo_sup):
+    try:
+        conn = sqlite3.connect(RUTAS["lab"])
+        cursor = conn.cursor()
+        fecha_hoy = datetime.now().strftime('%Y-%m-%d')
+        
+        cursor.execute('''
+            UPDATE registro_ide07 
+            SET sup_valida = ?, estado = 'APROBADO'
+            WHERE maquina = ? AND fecha = ? AND estado = 'PENDIENTE'
+        ''', (legajo_sup, maquina, fecha_hoy))
         
         conn.commit()
         conn.close()
         return True
-        
     except Exception as e:
-        # Si algo falla, lo mostramos en pantalla sin que se rompa la app
-        st.error(f"❌ Error al guardar el informe IDE 07: {e}")
+        st.error(f"Error en validación: {e}")
         return False
-    
-def obtener_historial_ide07(maquina):    
-    conn = sqlite3.connect(RUTAS["lab"])
-    query = """
-        SELECT fecha as FECHA, turno as TURNO, embalador as OPERARIO, 
-               producto as PRODUCTO, cajas as CAJAS, total as TOTAL_UNIDADES, 
-               descarte as DESCARTE
-        FROM registro_embalaje 
-        WHERE maquina = ? 
-        ORDER BY id DESC LIMIT 5
-    """
-    df = pd.read_sql_query(query, conn, params=(maquina,))
-    conn.close()
-    return df
-
 
 # --- INTERFAZ DE USUARIO ---
 
 def interfaz_embalaje(maquina, lote, producto):
-    st.markdown("### 📦 Control de Embalaje - Formulario CLT02")
+    st.markdown("### 📦 Control de Embalaje")
     
     # Cabecera informativa
     st.info(f"**Máquina:** {maquina} | **Lote/OP:** {lote} | **Producto:** {producto}")
@@ -159,10 +208,19 @@ def interfaz_embalaje(maquina, lote, producto):
                     
                     # Datos exclusivos para la DB de Producción
                     datos_ide07 = (
-                        ahora.strftime("%Y-%m-%d"), ahora.strftime("%H:%M:%S"),
-                        maquina, lote, producto, legajo_ide07,
-                        cajas, unidades_caja, total_ok, descarte, motivo, obs
-                    )
+                    ahora.strftime("%Y-%m-%d"),
+                    ahora.strftime("%H:%M:%S"),
+                    maquina,
+                    lote,
+                    producto,
+                    legajo_ide07,
+                    cajas,
+                    unidades_caja,
+                    total_ok,
+                    descarte,
+                    motivo,
+                    obs
+                )
                     
                     # Deberás crear/asegurar que exista esta función específica
                     if guardar_registro_ide07(datos_ide07):
@@ -218,13 +276,22 @@ def interfaz_embalaje(maquina, lote, producto):
                     st.error("❌ PIN Incorrecto. El registro CLT02 no fue firmado.")
                 else:
                     ahora = datetime.now()
-                    
+                    fecha_str = ahora.strftime("%Y-%m-%d")
+                    hora_str = ahora.strftime("%H:%M:%S")       
                     # Datos exclusivos para la DB de Calidad
                     datos_clt02 = (
-                        (datetime.now().strftime("%d/%m/%Y %H:%M")),
-                        maquina, inspector_sel, producto, legajo_clt02,
-                        check_medidas, check_impresion, check_tensiones, check_aspecto, obs
-                    )
+                    fecha_str,
+                    hora_str,
+                    maquina, 
+                    lote, 
+                    producto, 
+                    legajo_clt02,
+                    check_medidas, 
+                    check_impresion, 
+                    check_tensiones, 
+                    check_aspecto,
+                    obs
+                )
                     
                     if guardar_registro_clt02(datos_clt02):
                         st.success("✅ Formulario CLT02 Guardado y Firmado.")
