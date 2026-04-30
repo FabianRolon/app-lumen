@@ -12,31 +12,24 @@ def guardar_registro_clt02(datos):
         conn = sqlite3.connect(RUTAS["lab"])
         cursor = conn.cursor()
         
-        # 1. Tabla con fecha y hora separadas
+        # 1. Tabla CLT02 con columnas de auditoría
         cursor.execute(''' 
             CREATE TABLE IF NOT EXISTS registro_clt02 (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                fecha TEXT, 
-                hora TEXT,
-                maquina TEXT, 
-                op TEXT, 
-                producto TEXT,
-                embalador TEXT, 
-                c_medidas TEXT, 
-                c_impresion TEXT, 
-                c_tensiones TEXT, 
-                c_aspecto TEXT,
-                obs TEXT
+                fecha TEXT, hora TEXT, maquina TEXT, op TEXT, producto TEXT,
+                embalador TEXT, c_medidas TEXT, c_impresion TEXT, c_tensiones TEXT, 
+                c_aspecto TEXT, obs TEXT,
+                sup_valida TEXT, estado TEXT  -- 'PENDIENTE' o 'APROBADO'
             )
         ''')
         
-        # 2. INSERT con exactamente 11 campos y 11 signos '?'
+        # 2. Insertamos con estado PENDIENTE (13 campos en total)
         cursor.execute(''' 
             INSERT INTO registro_clt02 
-            (fecha, hora, maquina, op, producto, embalador, 
-             c_medidas, c_impresion, c_tensiones, c_aspecto, obs) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) 
-        ''', datos)
+            (fecha, hora, maquina, op, producto, embalador, c_medidas, 
+             c_impresion, c_tensiones, c_aspecto, obs, sup_valida, estado) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) 
+        ''', datos + (None, 'PENDIENTE'))
         
         conn.commit()
         conn.close()
@@ -45,6 +38,45 @@ def guardar_registro_clt02(datos):
         st.error(f"Error al guardar CLT02: {e}")
         return False
 
+def obtener_pendientes_clt02(maquina):
+    try:
+        conn = sqlite3.connect(RUTAS["lab"])
+        fecha_hoy = datetime.now().strftime('%Y-%m-%d')
+        query = f"""
+            SELECT id, hora as HORA, op as LOTE, producto as PRODUCTO, 
+                   c_medidas as MEDIDAS, c_impresion as IMPRESION, 
+                   c_tensiones as TENSION, c_aspecto as ASPECTO
+            FROM registro_clt02 
+            WHERE maquina = '{maquina}' 
+              AND fecha = '{fecha_hoy}' 
+              AND estado = 'PENDIENTE'
+            ORDER BY hora ASC
+        """
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        return df
+    except:
+        return pd.DataFrame()
+
+def validar_registros_pendientes_clt02(maquina, legajo_sup):
+    try:
+        conn = sqlite3.connect(RUTAS["lab"])
+        cursor = conn.cursor()
+        fecha_hoy = datetime.now().strftime('%Y-%m-%d')
+        
+        cursor.execute('''
+            UPDATE registro_clt02 
+            SET sup_valida = ?, estado = 'APROBADO'
+            WHERE maquina = ? AND fecha = ? AND estado = 'PENDIENTE'
+        ''', (legajo_sup, maquina, fecha_hoy))
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        st.error(f"Error en validación CLT02: {e}")
+        return False
+    
 def obtener_historial_clt02(maquina):
     try:
         conn = sqlite3.connect(RUTAS["lab"])

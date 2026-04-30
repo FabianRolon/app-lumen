@@ -7,7 +7,7 @@ def inicializar_db():
     conn = sqlite3.connect(RUTAS["lab"])
     cursor = conn.cursor()
     
-    # 1. Tabla Laboratorio (Mantenemos igual)
+    # 1. Tabla Laboratorio
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS analisis_hidrolitica (
             nro_analisis INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,7 +26,7 @@ def inicializar_db():
         CREATE TABLE IF NOT EXISTS consumos_planta (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             fecha TEXT, hora TEXT, maquina TEXT,
-            codigo_mp TEXT, origen TEXT, kilos_usados REAL, tubos_usados INTEGER,
+            codigo_mp TEXT, lote_lumen TEXT, origen TEXT, kilos_usados REAL, tubos_usados INTEGER,
             prod_total INTEGER, desc_destruido REAL, desc_recuperable REAL, 
             estado_sync TEXT
         )
@@ -42,11 +42,10 @@ def inicializar_db():
         except: pass
 
     # 3. Tabla de Control Dimensional (CP 71 REV 3)
-    # Actualizamos para los 5 campos específicos del papel
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS controles_proceso (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            fecha TEXT, hora TEXT, maquina TEXT, codigo_mp TEXT,
+            fecha TEXT, hora TEXT, lote_lumen TEXT, maquina TEXT, codigo_mp TEXT,
             legajo_operario TEXT, largo REAL, diam_int_boca REAL, 
             diam_ext_boca REAL, altura_labio REAL, espesor_fondo REAL,
             defecto_visual TEXT, estado TEXT, accion_correctiva TEXT
@@ -67,15 +66,15 @@ def inicializar_db():
         CREATE TABLE IF NOT EXISTS paradas_maquina (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             fecha TEXT, hora_inicio TEXT, hora_fin TEXT, 
-            maquina TEXT, causa TEXT, intervencion TEXT, responsable TEXT
+            maquina TEXT, lote_lumen TEXT, causa TEXT, intervencion TEXT, responsable TEXT
         )
     ''')
 
-    # 5. Tabla de Liberación (Los 9 puntos)
+    # 5. Tabla de Liberación
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS liberacion_linea (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            fecha TEXT, hora TEXT, maquina TEXT,
+            fecha TEXT, hora TEXT, lote_lumen TEXT, maquina TEXT,
             codigo_mp TEXT, legajo_firma TEXT, estado TEXT
         )
     ''')
@@ -109,7 +108,7 @@ def inicializar_db():
             hora TEXT,
             turno TEXT,
             maquina TEXT,
-            op TEXT,
+            lote_lumen TEXT,
             producto TEXT,
             embalador TEXT,
             cajas INTEGER,

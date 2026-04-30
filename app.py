@@ -7,6 +7,24 @@ import sqlite3
 import dbf
 from streamlit_option_menu import option_menu
 
+def migrar_laboratorio_existente():
+    conn = sqlite3.connect(RUTAS["lab"])
+    cursor = conn.cursor()
+    try:
+        # Añadimos las columnas de auditoría
+        cursor.execute("ALTER TABLE analisis_hidrolitica ADD COLUMN sup_valida TEXT")
+        cursor.execute("ALTER TABLE analisis_hidrolitica ADD COLUMN estado TEXT")
+        
+        # Marcamos la historia previa como aprobada
+        cursor.execute("UPDATE analisis_hidrolitica SET estado = 'APROBADO' WHERE estado IS NULL")
+        
+        conn.commit()
+        st.success("✅ Tabla analisis_hidrolitica actualizada con éxito.")
+    except sqlite3.OperationalError:
+        st.info("ℹ️ La tabla ya cuenta con las columnas de validación.")
+    finally:
+        conn.close()
+
 # --- IMPORTACIONES DE LA NUEVA ARQUITECTURA ---
 from config import RUTAS, aplicar_estilos
 from utils.db_helpers import inicializar_db

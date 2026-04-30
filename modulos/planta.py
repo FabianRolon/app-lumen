@@ -3,7 +3,9 @@ import datetime
 import sqlite3
 import pandas as pd
 from config import RUTAS, MAQUINAS
-from modulos.embalaje import interfaz_embalaje, validar_registros_pendientes, obtener_pendientes_ide07
+from modulos.embalaje import (interfaz_embalaje, validar_registros_pendientes, 
+                              obtener_pendientes_ide07, obtener_pendientes_clt02, 
+                              validar_registros_pendientes_clt02)
 from utils.db_helpers import validar_pin_operario
 
 # --- MOTORES DE BASE DE DATOS ---
@@ -55,14 +57,14 @@ def guardar_parada_maquina(datos):
 def guardar_consumo_idp(datos):
     conn = sqlite3.connect(RUTAS["lab"])
     cursor = conn.cursor()
-    cursor.execute('''INSERT INTO consumos_planta (fecha, hora, maquina, codigo_mp, origen, kilos_usados, tubos_usados, prod_total, desc_destruido, desc_recuperable, estado_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE')''', datos)
+    cursor.execute('''INSERT INTO consumos_planta (fecha, hora, maquina, codigo_mp, lote_lumen, origen, kilos_usados, tubos_usados, prod_total, desc_destruido, desc_recuperable, estado_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE')''', datos)
     conn.commit()
     conn.close()
 
 def guardar_control_cp71(datos):
     conn = sqlite3.connect(RUTAS["lab"])
     cursor = conn.cursor()
-    cursor.execute('''INSERT INTO controles_proceso (fecha, hora, maquina, codigo_mp, legajo_operario, largo, diam_int_boca, diam_ext_boca, altura_labio, espesor_fondo, defecto_visual, estado, accion_correctiva) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''', datos)
+    cursor.execute('''INSERT INTO controles_proceso (fecha, hora, lote_lumen, maquina, codigo_mp, legajo_operario, largo, diam_int_boca, diam_ext_boca, altura_labio, espesor_fondo, defecto_visual, estado, accion_correctiva) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', datos)
     conn.commit()
     conn.close()
 
@@ -74,17 +76,17 @@ def verificar_liberacion(maquina, codigo, fecha):
     conn.close()
     return resultado
 
-def firmar_liberacion(maquina, codigo, legajo):
+def firmar_liberacion(lote_lumen, maquina, codigo, legajo):
     ahora = datetime.datetime.now()
     conn = sqlite3.connect(RUTAS["lab"])
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO liberacion_linea (fecha, hora, maquina, codigo_mp, legajo_firma, estado) VALUES (?, ?, ?, ?, ?, ?)", (ahora.strftime("%Y-%m-%d"), ahora.strftime("%H:%M:%S"), maquina, codigo, legajo, "LIBERADO"))
+    cursor.execute("INSERT INTO liberacion_linea (fecha, hora, lote_lumen, maquina, codigo_mp, legajo_firma, estado) VALUES (?, ?, ?, ?, ?, ?, ?)", (ahora.strftime("%Y-%m-%d"), ahora.strftime("%H:%M:%S"), lote_lumen, maquina, codigo, legajo, "LIBERADO"))
     conn.commit()
     conn.close()
 
 def cargar_controles_hoy(maquina, codigo, fecha):
     conn = sqlite3.connect(RUTAS["lab"])
-    df = pd.read_sql_query('''SELECT hora as HORA, legajo_operario as FIRMA, largo as L_MM, diam_int_boca as D_INT, diam_ext_boca as D_EXT, altura_labio as LABIO, espesor_fondo as FONDO, estado as ESTADO FROM controles_proceso WHERE maquina=? AND codigo_mp=? AND fecha=? ORDER BY hora DESC''', conn, params=(maquina, codigo, fecha))
+    df = pd.read_sql_query('''SELECT hora as HORA, legajo_operario as FIRMA, lote_lumen as "LOTE LUMEN", largo as L_MM, diam_int_boca as D_INT, diam_ext_boca as D_EXT, altura_labio as LABIO, espesor_fondo as FONDO, estado as ESTADO FROM controles_proceso WHERE maquina=? AND codigo_mp=? AND fecha=? ORDER BY hora DESC''', conn, params=(maquina, codigo, fecha))
     conn.close()
     return df
 
@@ -234,7 +236,7 @@ def renderizar_planta(df_st, df_prod):
                 if pin_sel != "-":
                     legajo_limpio = pin_sel.split(" - ")[0]
                     if validar_pin_operario(legajo_limpio, pin_pass):
-                        firmar_liberacion(maq_sel, id_lib, legajo_limpio)
+                        firmar_liberacion(lote_lumen, maq_sel, id_lib, legajo_limpio)
                         st.rerun()
                     else: st.error("❌ PIN incorrecto.")
     else:
@@ -306,88 +308,93 @@ def renderizar_planta(df_st, df_prod):
 
         else:
             st.success(f"🧪 **MODO VIALES ACTIVADO**")
-            tab_cp, tab_idp, tab_stop, tab_emb, tab_cierre = st.tabs(["📏 Control (CP 71)", "⚖️ Informe (IDP 71)", "⚠️ Paradas", "📦 Embalaje", "🏁 Cierre de Turno"])
+            tab_maquina, tab_emb, tab_cierre = st.tabs(["⚙️ Maquina", "📦 Embalaje", "🏁 Cierre de Turno"])
             
-            with tab_cp:
-                st.markdown("#### Registro de Mediciones (REV 3)")
-                col_form, col_hist = st.columns([3, 2])
-                with col_form:
+            with tab_maquina:
+                # Cabecera informativa
+                st.info(f"**Máquina:** {maq_sel} | **Lote/OP:** {lote_lumen} | **Producto:** {nombre_producto_oficial}")
+                tab_cp, tab_idp, tab_stop = st.tabs(["📏 Control (CP 71)", "⚖️ Informe (IDP 71)", "⚠️ Paradas"])
+
+                with tab_cp:
+                    st.markdown("#### Registro de Mediciones (REV 3)")
+                    col_form, col_hist = st.columns([3, 2])
+                    with col_form:
+                        with st.container(border=True):
+                            m_c1, m_c2, m_c3 = st.columns(3)
+                            with m_c1: v_largo = st.number_input("Largo Total (mm)", step=0.01, format="%.2f")
+                            with m_c2: v_d_int = st.number_input("Ø Int. Boca (mm)", step=0.01, format="%.2f")
+                            with m_c3: v_d_ext = st.number_input("Ø Ext. Boca (mm)", step=0.01, format="%.2f")
+                            
+                            m_c4, m_c5, m_c6 = st.columns(3)
+                            with m_c4: v_labio = st.number_input("Altura Labio (mm)", step=0.01, format="%.2f")
+                            with m_c5: v_fondo = st.number_input("Espesor Fondo (mm)", step=0.01, format="%.2f")
+                            with m_c6: v_eval = st.radio("Evaluación", ["Conforme", "No Conforme"], horizontal=True)
+                            
+                            v_accion = st.text_input("Acción Correctiva") if v_eval == "No Conforme" else "-"
+                            
+                            ccp1, ccp2 = st.columns(2)
+                            with ccp1: v_pin_sel = st.selectbox("👷 Maquinista", lista_operarios, key="p_cp")
+                            with ccp2: v_pin_pass = st.text_input("🔑 PIN", type="password", key="p_cp_pass")
+                            
+                            if st.button("💾 GUARDAR MEDICIÓN CP 71", type="primary", use_container_width=True):
+                                if v_pin_sel != "-":
+                                    legajo_limpio = v_pin_sel.split(" - ")[0]
+                                    if validar_pin_operario(legajo_limpio, v_pin_pass):
+                                        guardar_control_cp71((fecha_hoy, datetime.datetime.now().strftime("%H:%M:%S"), lote_lumen, maq_sel, id_lib, legajo_limpio, v_largo, v_d_int, v_d_ext, v_labio, v_fondo, "OK", v_eval, v_accion))
+                                        st.rerun()
+                                    else: st.error("❌ PIN incorrecto.")
+                    with col_hist:
+                        df_hist = cargar_controles_hoy(maq_sel, id_lib, fecha_hoy)
+                        if not df_hist.empty:
+                            st.dataframe(df_hist, use_container_width=True, hide_index=True)
+
+                with tab_idp:
+                    st.markdown("#### Balance de Producción y Consumos")
                     with st.container(border=True):
-                        m_c1, m_c2, m_c3 = st.columns(3)
-                        with m_c1: v_largo = st.number_input("Largo Total (mm)", step=0.01, format="%.2f")
-                        with m_c2: v_d_int = st.number_input("Ø Int. Boca (mm)", step=0.01, format="%.2f")
-                        with m_c3: v_d_ext = st.number_input("Ø Ext. Boca (mm)", step=0.01, format="%.2f")
+                        b_c1, b_c2 = st.columns(2)
+                        with b_c1:
+                            i_kg = st.number_input("Vidrio Usado (Kg)", min_value=0.0)
+                            i_tub = st.number_input("Tubos Usados (u)", min_value=0)
+                        with b_c2:
+                            i_prod = st.number_input("Producción Total (Buenos)", min_value=0)
                         
-                        m_c4, m_c5, m_c6 = st.columns(3)
-                        with m_c4: v_labio = st.number_input("Altura Labio (mm)", step=0.01, format="%.2f")
-                        with m_c5: v_fondo = st.number_input("Espesor Fondo (mm)", step=0.01, format="%.2f")
-                        with m_c6: v_eval = st.radio("Evaluación", ["Conforme", "No Conforme"], horizontal=True)
+                        st.markdown("**Descarte / Rotura (Kg)**")
+                        d_c1, d_c2 = st.columns(2)
+                        with d_c1: i_dest = st.number_input("Destruido", min_value=0.0)
+                        with d_c2: i_recu = st.number_input("Recuperable", min_value=0.0)
                         
-                        v_accion = st.text_input("Acción Correctiva") if v_eval == "No Conforme" else "-"
+                        cip1, cip2 = st.columns(2)
+                        with cip1: i_pin_sel = st.selectbox("👷 Confirmar Operario", lista_operarios, key="p_idp")
+                        with cip2: i_pin_pass = st.text_input("🔑 PIN", type="password", key="p_idp_pass")
                         
-                        ccp1, ccp2 = st.columns(2)
-                        with ccp1: v_pin_sel = st.selectbox("👷 Maquinista", lista_operarios, key="p_cp")
-                        with ccp2: v_pin_pass = st.text_input("🔑 PIN", type="password", key="p_cp_pass")
-                        
-                        if st.button("💾 GUARDAR MEDICIÓN CP 71", type="primary", use_container_width=True):
-                            if v_pin_sel != "-":
-                                legajo_limpio = v_pin_sel.split(" - ")[0]
-                                if validar_pin_operario(legajo_limpio, v_pin_pass):
-                                    guardar_control_cp71((fecha_hoy, datetime.datetime.now().strftime("%H:%M:%S"), maq_sel, id_lib, legajo_limpio, v_largo, v_d_int, v_d_ext, v_labio, v_fondo, "OK", v_eval, v_accion))
-                                    st.rerun()
+                        if st.button("💾 GUARDAR REPORTE IDP 71", type="primary", use_container_width=True):
+                            if i_pin_sel != "-":
+                                legajo_limpio = i_pin_sel.split(" - ")[0]
+                                if validar_pin_operario(legajo_limpio, i_pin_pass):
+                                    guardar_consumo_idp((fecha_hoy, datetime.datetime.now().strftime("%H:%M:%S"), maq_sel, id_lib, lote_lumen, ori_sel, i_kg, i_tub, i_prod, i_dest, i_recu))
+                                    st.success("Informe registrado.")   
                                 else: st.error("❌ PIN incorrecto.")
-                with col_hist:
-                    df_hist = cargar_controles_hoy(maq_sel, id_lib, fecha_hoy)
-                    if not df_hist.empty:
-                        st.dataframe(df_hist, use_container_width=True, hide_index=True)
 
-            with tab_idp:
-                st.markdown("#### Balance de Producción y Consumos")
-                with st.container(border=True):
-                    b_c1, b_c2 = st.columns(2)
-                    with b_c1:
-                        i_kg = st.number_input("Vidrio Usado (Kg)", min_value=0.0)
-                        i_tub = st.number_input("Tubos Usados (u)", min_value=0)
-                    with b_c2:
-                        i_prod = st.number_input("Producción Total (Buenos)", min_value=0)
-                    
-                    st.markdown("**Descarte / Rotura (Kg)**")
-                    d_c1, d_c2 = st.columns(2)
-                    with d_c1: i_dest = st.number_input("Destruido", min_value=0.0)
-                    with d_c2: i_recu = st.number_input("Recuperable", min_value=0.0)
-                    
-                    cip1, cip2 = st.columns(2)
-                    with cip1: i_pin_sel = st.selectbox("👷 Confirmar Operario", lista_operarios, key="p_idp")
-                    with cip2: i_pin_pass = st.text_input("🔑 PIN", type="password", key="p_idp_pass")
-                    
-                    if st.button("💾 GUARDAR REPORTE IDP 71", type="primary", use_container_width=True):
-                        if i_pin_sel != "-":
-                            legajo_limpio = i_pin_sel.split(" - ")[0]
-                            if validar_pin_operario(legajo_limpio, i_pin_pass):
-                                guardar_consumo_idp((fecha_hoy, datetime.datetime.now().strftime("%H:%M:%S"), maq_sel, id_lib, ori_sel, i_kg, i_tub, i_prod, i_dest, i_recu))
-                                st.success("Informe registrado.")
-                            else: st.error("❌ PIN incorrecto.")
-
-            with tab_stop:
-                st.markdown("#### Registro de Paradas")
-                with st.container(border=True):
-                    p_c1, p_c2 = st.columns(2)
-                    with p_c1: p_ini = st.time_input("Hora Inicio")
-                    with p_c2: p_fin = st.time_input("Hora Fin")
-                    p_causa = st.text_area("Causa de la Parada")
-                    p_inter = st.text_area("Intervención Realizada")
-                    
-                    cstp1, cstp2 = st.columns(2)
-                    with cstp1: p_pin_sel = st.selectbox("👷 Responsable", lista_operarios, key="p_stop")
-                    with cstp2: p_pin_pass = st.text_input("🔑 PIN", type="password", key="p_stop_pass")
-                    
-                    if st.button("💾 REGISTRAR PARADA", use_container_width=True):
-                        if p_pin_sel != "-":
-                            legajo_limpio = p_pin_sel.split(" - ")[0]
-                            if validar_pin_operario(legajo_limpio, p_pin_pass):
-                                guardar_parada_maquina((fecha_hoy, p_ini.strftime("%H:%M"), p_fin.strftime("%H:%M"), maq_sel, p_causa, p_inter, legajo_limpio))
-                                st.warning("Parada registrada.")
-                            else: st.error("❌ PIN incorrecto.")
+                    with tab_stop:
+                        st.markdown("#### Registro de Paradas")
+                        with st.container(border=True):
+                            p_c1, p_c2 = st.columns(2)
+                            with p_c1: p_ini = st.time_input("Hora Inicio")
+                            with p_c2: p_fin = st.time_input("Hora Fin")
+                            p_causa = st.text_area("Causa de la Parada")
+                            p_inter = st.text_area("Intervención Realizada")
+                            
+                            cstp1, cstp2 = st.columns(2)
+                            with cstp1: p_pin_sel = st.selectbox("👷 Responsable", lista_operarios, key="p_stop")
+                            with cstp2: p_pin_pass = st.text_input("🔑 PIN", type="password", key="p_stop_pass")
+                            
+                            if st.button("💾 REGISTRAR PARADA", use_container_width=True):
+                                if p_pin_sel != "-":
+                                    legajo_limpio = p_pin_sel.split(" - ")[0]
+                                    if validar_pin_operario(legajo_limpio, p_pin_pass):
+                                        guardar_parada_maquina((fecha_hoy, p_ini.strftime("%H:%M"), p_fin.strftime("%H:%M"), maq_sel, p_causa, p_inter, legajo_limpio))
+                                        st.warning("Parada registrada.")
+                                    else: st.error("❌ PIN incorrecto.")
 
             with tab_emb:
                 interfaz_embalaje(maq_sel, lote_lumen, nombre_producto_oficial)
@@ -399,7 +406,7 @@ def renderizar_planta(df_st, df_prod):
                     tot_kg, tot_tub, tot_prod, tot_dest, tot_recu = resumen
                     tot_kg, tot_tub, tot_prod, tot_dest, tot_recu = tot_kg or 0.0, tot_tub or 0, tot_prod or 0, tot_dest or 0.0, tot_recu or 0.0
                     tot_descarte = tot_dest + tot_recu
-                    pct_descarte = (tot_descarte / tot_kg * 100) if tot_kg > 0 else 0.0
+                    pct_descarte = (tot_descarte / tot_kg * 100) if tot_kg > 0 else 0.0 
                     
                     with st.container(border=True):
                         c1, c2, c3 = st.columns(3)
@@ -432,7 +439,7 @@ def renderizar_planta(df_st, df_prod):
                                 cerrar_linea(maq_sel, id_lib, fecha_hoy, legajo_limpio)
                                 st.rerun()
                             else: st.error("❌ PIN incorrecto.")
-                st.markdown("#### 🛡️ Validación de Supervisor (ISO 9001)")
+                st.markdown("🛡️ Informes diarios embalaje pendientes de aprobacion")
                 # Traemos lo que cargaron los embaladores hoy que aún no está firmado
                 df_pendientes = obtener_pendientes_ide07(maq_sel)
                     
@@ -463,4 +470,31 @@ def renderizar_planta(df_st, df_prod):
                                     st.error("❌ PIN de supervisor incorrecto.")
                 else:
                     st.success("🙌 No hay registros pendientes de validación para hoy.")
+
+                st.markdown("🧪 Controles de Calidad CLT02 Pendientes de aprobación")
+                df_pend_clt = obtener_pendientes_clt02(maq_sel)
+
+                if not df_pend_clt.empty:
+                    st.warning(f"Hay {len(df_pend_clt)} controles de calidad esperando firma.")
+                    st.dataframe(df_pend_clt.drop(columns=['id']), use_container_width=True, hide_index=True)
+                    
+                    with st.expander("🔐 Firmar Controles de Calidad"):
+                        with st.form("form_val_clt02"):
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                sup_clt = st.selectbox("Supervisor", lista_operarios, key="sup_val_clt")
+                            with col2:
+                                pin_clt = st.text_input("PIN Supervisor", type="password", key="pin_val_clt")
+                            
+                            if st.form_submit_button("✅ Aprobar Calidad", use_container_width=True):
+                                legajo_s = str(sup_clt).split("-")[0].strip()
+                                if validar_pin_operario(legajo_s, pin_clt):
+                                    if validar_registros_pendientes_clt02(maq_sel, legajo_s):
+                                        st.success("✅ Controles de calidad aprobados.")
+                                        st.rerun()
+                                else:
+                                    st.error("PIN incorrecto.")
+                else:
+                    st.success("✅ No hay controles de calidad pendientes.")
+
                 

@@ -7,19 +7,67 @@ import re
 from fpdf import FPDF
 from config import RUTAS, RESPONSABLES, BOCAS, MAQUINAS, HORNOS
 from utils.data_core import cargar_produccion, cargar_pedidos_completos
+from utils.db_helpers import obtener_operarios_habilitados
+from modulos.embalaje import validar_pin_operario
 
 def guardar_analisis_lab(datos):
-    conn = sqlite3.connect(RUTAS["lab"])
-    cursor = conn.cursor()
-    cursor.execute('''
-        INSERT INTO analisis_hidrolitica (
-            nro_analisis, fecha, hora, responsable, maquina, horno, temperatura, cliente, medida, capacidad, cod, boca, 
-            color, pared, impresion, tratado, lote_lumen, l_m_prima, batch, volumen, blanco, 
-            titulacion, resultado_final, maximo, observaciones
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ''', datos)
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect(RUTAS["lab"])
+        cursor = conn.cursor()
+        
+        # Ahora usamos 27 campos (25 originales + 2 de auditoría)
+        query = '''
+            INSERT INTO analisis_hidrolitica (
+                nro_analisis, fecha, hora, responsable, maquina, horno, temperatura, 
+                cliente, medida, capacidad, cod, boca, color, pared, impresion, 
+                tratado, lote_lumen, l_m_prima, batch, volumen, blanco, 
+                titulacion, resultado_final, maximo, observaciones,
+                sup_valida, estado
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        '''
+        # Añadimos (None, 'PENDIENTE') al final de la tupla de datos que recibimos
+        cursor.execute(query, datos + (None, 'PENDIENTE'))
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        st.error(f"Error al registrar análisis: {e}")
+        return False
+    
+
+def obtener_analisis_pendientes():
+    try:
+        conn = sqlite3.connect(RUTAS["lab"])
+        # Traemos datos clave para que el supervisor decida
+        query = """
+            SELECT nro_analisis, fecha, responsable, lote_lumen, resultado_final, maximo
+            FROM analisis_hidrolitica 
+            WHERE estado = 'PENDIENTE'
+            ORDER BY nro_analisis ASC
+        """
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        return df
+    except:
+        return pd.DataFrame()
+
+def aprobar_analisis_laboratorio(lista_nros, legajo_sup):
+    try:
+        conn = sqlite3.connect(RUTAS["lab"])
+        cursor = conn.cursor()
+        for nro in lista_nros:
+            cursor.execute('''
+                UPDATE analisis_hidrolitica 
+                SET sup_valida = ?, estado = 'APROBADO'
+                WHERE nro_analisis = ?
+            ''', (legajo_sup, nro))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        st.error(f"Error en validación técnica: {e}")
+        return False
 
 def limpiar_comercial(valor):
     if pd.isna(valor) or valor is None: return "-"
@@ -132,7 +180,6 @@ def registrar_analisis_legado(datos_manuales):
               medida, capacidad, color, boca, pared, maquina, impresion, l_m_prima, batch, nro_cert))
         conn.commit()
     except Exception as e:
-        import streamlit as st
         st.error(f"Falla crítica al escribir en base de datos: {e}")
         nro_analisis_manual, nro_cert = 0, 0
     finally: conn.close()
@@ -379,54 +426,78 @@ def renderizar_modulo_laboratorio():
         st.success("✅ Análisis guardado exitosamente.")
         st.session_state.exito_lab = False 
 
-    tab_lab1, tab_lab2, tab_lab3 = st.tabs(["📝 Nuevo Análisis", "📚 Historial y Certificados", "🌡️ Registros Temperatura"])
-
+    tab_lab1, tab_lab2, tab_lab3, tab_lab4 = st.tabs(["📝 Nuevo Análisis", "📚 Historial y Certificados", "🌡️ Registros Temperatura", "Validacion"])
+    lista_operarios = obtener_operarios_habilitados()
     with tab_lab1:
         nro_actual = obtener_siguiente_nro_analisis()
         st.markdown(f"### Análisis Nro: **{nro_actual}**")
         
         def accion_guardar():
+            # 1. Extraemos el legajo del responsable seleccionado
+            legajo_analista = str(st.session_state.lab_resp).split("-")[0].strip()
+            pin_ingresado = st.session_state.pin_lab_analista
+            
+            # 2. VALIDACIÓN DE IDENTIDAD (ISO 9001)
+            if not validar_pin_operario(legajo_analista, pin_ingresado):
+                st.error("❌ PIN de analista incorrecto. El análisis no se puede registrar.")
+                return # Cortamos la ejecución aquí
+                
             ahora = datetime.datetime.now()
             v = st.session_state.lab_vol
             b = st.session_state.n_bla
             t = st.session_state.n_tit
             res = (t - b) * 2 if v == "50%" else (t - b)
             
+            # 3. Preparamos los 25 datos originales
             datos = (
                 nro_actual, ahora.strftime("%Y-%m-%d"), ahora.strftime("%H:%M:%S"),
-                st.session_state.lab_resp, st.session_state.lab_maq, st.session_state.lab_hor,
+                legajo_analista, st.session_state.lab_maq, st.session_state.lab_hor,
                 st.session_state.lab_temp, st.session_state.t_cli, st.session_state.t_med, st.session_state.t_cap, st.session_state.t_cod, 
                 st.session_state.lab_boc, st.session_state.lab_col, st.session_state.lab_par, 
                 st.session_state.t_imp, st.session_state.lab_trat, st.session_state.t_lote, 
                 st.session_state.t_lmp, st.session_state.t_batch, v, b, t, res, st.session_state.t_max, st.session_state.t_obs
             )
-            guardar_analisis_lab(datos)
-            cod_mp_oculto = st.session_state.get('hidden_cod_mp', '')
-            enriquecer_catalogo_articulos(
-                st.session_state.t_cod, st.session_state.t_cap, st.session_state.lab_col, 
-                st.session_state.lab_boc, st.session_state.lab_par, cod_mp_oculto, st.session_state.t_max
-            )   
             
-            claves_texto = ["t_cli", "t_lote", "t_med", "t_cap", "t_lmp", "t_cod", "t_batch", "t_imp", "t_obs","lab_temp"]
-            for k in claves_texto: st.session_state[k] = ""
-            for k in ["n_bla", "n_tit", "t_max"]: st.session_state[k] = 0.0
-            st.session_state.exito_lab = True
+            # 4. Guardamos (la función interna agregará None y 'PENDIENTE')
+            if guardar_analisis_lab(datos):
+                cod_mp_oculto = st.session_state.get('hidden_cod_mp', '')
+                enriquecer_catalogo_articulos(
+                    st.session_state.t_cod, st.session_state.t_cap, st.session_state.lab_col, 
+                    st.session_state.lab_boc, st.session_state.lab_par, cod_mp_oculto, st.session_state.t_max
+                )   
+                
+                # Limpieza de campos
+                claves_texto = ["t_cli", "t_lote", "t_med", "t_cap", "t_lmp", "t_cod", "t_batch", "t_imp", "t_obs","lab_temp", "pin_lab_analista"]
+                for k in claves_texto: st.session_state[k] = ""
+                for k in ["n_bla", "n_tit", "t_max"]: st.session_state[k] = 0.0
+                
+                st.success(f"✅ Análisis {nro_actual} registrado correctamente y pendiente de validación.")
+                st.session_state.exito_lab = True
+                st.rerun()
 
+        # --- INTERFAZ DE CARGA ---
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            resp = st.selectbox("Responsable", RESPONSABLES, key="lab_resp")
+            # USAMOS LA LISTA GENERAL DE OPERARIOS
+            resp = st.selectbox("Analista Responsable", lista_operarios, key="lab_resp")
+            # CAMPO PARA PIN
+            pin_analista = st.text_input("Confirmar con PIN", type="password", key="pin_lab_analista")
+            
             cod = st.text_input("Cod. Frasco (Enter para autocompletar)", key="t_cod", on_change=autocompletar_frasco) 
             lote_lum = st.text_input("Lote Lumen", key="t_lote", on_change=autocompletar_por_lote)
+        
         with col2:
             cli = st.text_input("Cliente", key="t_cli")
             maq = st.selectbox("Máquina", MAQUINAS, key="lab_maq")
             l_mp = st.text_input("L.M.Prima", key="t_lmp")
+        
         with col3:
             hor = st.selectbox("Horno", HORNOS, key="lab_hor")
             temp = st.text_input("Temp. Horno (°C)", key="lab_temp")
             med = st.text_input("Medida (mm)", key="t_med")
             cap = st.text_input("Capacidad (ml)", key="t_cap")
             batch = st.text_input("Batch", key="t_batch")
+        
         with col4:
             boc = st.selectbox("Boca", BOCAS, key="lab_boc") 
             col_vid = st.selectbox("Color", ["Ambar", "Incoloro"], key="lab_col") 
@@ -591,3 +662,38 @@ def renderizar_modulo_laboratorio():
         if not df_temp.empty:
             df_temp_mostrar = df_temp.rename(columns={'fecha': 'DÍA', 'hora': 'HORARIO', 'temperatura': 'TEMPERATURA (°C)', 'responsable': 'FIRMA / RÚBRICA', 'verificacion': 'VERIFICACIÓN'})
             st.dataframe(df_temp_mostrar.drop(columns=['id']), use_container_width=True)
+
+    with tab_lab4:
+        st.title("🔬 Validación Técnica de Laboratorio")
+
+        df_pend = obtener_analisis_pendientes()
+
+        if not df_pend.empty:
+            st.warning(f"Hay {len(df_pend)} protocolos de Hidrolítica esperando validación.")
+            
+            # El supervisor selecciona cuáles aprueba (por defecto todos)
+            seleccion = st.multiselect(
+                "Protocolos a validar:",
+                options=df_pend['nro_analisis'].tolist(),
+                default=df_pend['nro_analisis'].tolist()
+            )
+            
+            st.dataframe(df_pend[df_pend['nro_analisis'].isin(seleccion)], use_container_width=True)
+
+            with st.form("firma_jefe_lab"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    sup_lab = st.selectbox("Jefe de Laboratorio", lista_operarios)
+                with col2:
+                    pin_sup = st.text_input("PIN de Firma Digital", type="password")
+                
+                if st.form_submit_button("🛡️ Validar Protocolos Seleccionados"):
+                    legajo_s = str(sup_lab).split("-")[0].strip()
+                    if validar_pin_operario(legajo_s, pin_sup):
+                        if aprobar_analisis_laboratorio(seleccion, legajo_s):
+                            st.success("✅ Análisis validados y cerrados para protocolo.")
+                            st.rerun()
+                    else:
+                        st.error("PIN de autoridad incorrecto.")
+        else:
+            st.success("🎉 Todos los análisis de laboratorio están validados.")
