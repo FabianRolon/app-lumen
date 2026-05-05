@@ -7,23 +7,6 @@ import sqlite3
 import dbf
 from streamlit_option_menu import option_menu
 
-def migrar_laboratorio_existente():
-    conn = sqlite3.connect(RUTAS["lab"])
-    cursor = conn.cursor()
-    try:
-        # Añadimos las columnas de auditoría
-        cursor.execute("ALTER TABLE analisis_hidrolitica ADD COLUMN sup_valida TEXT")
-        cursor.execute("ALTER TABLE analisis_hidrolitica ADD COLUMN estado TEXT")
-        
-        # Marcamos la historia previa como aprobada
-        cursor.execute("UPDATE analisis_hidrolitica SET estado = 'APROBADO' WHERE estado IS NULL")
-        
-        conn.commit()
-        st.success("✅ Tabla analisis_hidrolitica actualizada con éxito.")
-    except sqlite3.OperationalError:
-        st.info("ℹ️ La tabla ya cuenta con las columnas de validación.")
-    finally:
-        conn.close()
 
 # --- IMPORTACIONES DE LA NUEVA ARQUITECTURA ---
 from config import RUTAS, aplicar_estilos
@@ -44,85 +27,122 @@ inicializar_db()
 def obtener_consumos_pendientes():
     if not os.path.exists(RUTAS["lab"]): return pd.DataFrame()
     conn = sqlite3.connect(RUTAS["lab"])
-    df = pd.read_sql_query("SELECT * FROM consumos_planta WHERE estado_sync = 'PENDIENTE'", conn)
+    
+    query = """
+    /* SECTOR VIALES */
+    SELECT 
+        id, 
+        fecha, 
+        maquina, 
+        codigo_mp,                         -- Nombre real en consumos_planta
+        kilos_usados AS kilos_a_descontar, -- Mapeo de kilos
+        tubos_usados AS tubos_a_descontar, -- Mapeo de tubos
+        origen,
+        'consumos_planta' AS tabla_origen,
+        'Viales' AS SECTOR
+    FROM consumos_planta 
+    WHERE estado_sync = 'PENDIENTE'
+    
+    UNION ALL
+    
+    /* SECTOR CORTE */
+    SELECT 
+        id, 
+        fecha, 
+        maquina, 
+        codigo_mp AS codigo_mp,           -- Usamos lote_lumen como el código del material
+        kg_vidrio_bruto AS kilos_a_descontar, -- Mapeo de kilos (nombre distinto!)
+        tubos_usados AS tubos_a_descontar,    -- Mapeo de tubos (columna nueva)
+        origen,
+        'proceso_corte_tubos' AS tabla_origen,
+        'Corte' AS SECTOR
+    FROM proceso_corte_tubos 
+    WHERE estado_sync = 'PENDIENTE'
+    """
+    
+    df = pd.read_sql_query(query, conn)
     conn.close()
     return df
 
+
 def sincronizar_stock_dbf():
+    # 1. Obtenemos los pendientes
     df_pendientes = obtener_consumos_pendientes()
-    if df_pendientes.empty: return 0, "No hay consumos pendientes."
+    if df_pendientes.empty: 
+        return 0, ["No hay consumos pendientes."]
     
-    # 1. VOLVEMOS A TUS VARIABLES ORIGINALES (usamos fillna(0) por seguridad matemática)
-    df_pendientes['kilos_totales'] = df_pendientes['kilos_usados'].fillna(0) + df_pendientes['descarte_kg'].fillna(0)
-    df_agrupado = df_pendientes.groupby(['codigo_mp', 'origen'], as_index=False)[['kilos_totales', 'tubos_usados']].sum()
-    
-    consumos_dict = {}
-    for index, row in df_agrupado.iterrows():
-        # 2. MEJORA DE SEGURIDAD: Usamos una "tupla" en lugar de un texto con guiones bajos.
-        # Así, si tu código es "Z_014", no se rompe la separación.
-        llave = (str(row['codigo_mp']).strip().upper(), str(row['origen']).strip().upper())
-        consumos_dict[llave] = {'k': float(row['kilos_totales']), 't': int(row['tubos_usados']), 'encontrado': False}
-    
-    mapa_origen_inverso = {'BRASIL': '1', 'CHINA': '2', 'EE.UU.': '3'}
+    ANIO_CORRIENTE = 2026
+    mapa_origenes = {"BRASIL": 1, "CHINA": 2, "EEUU": 3, "USA": 3}
+
+    # 🛡️ BACKUP AUTOMÁTICO
+    ruta_stock = RUTAS["stock_movimientos"]["red"]
+    try:
+        if os.path.exists(ruta_stock):
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            ruta_backup = ruta_stock.lower().replace(".dbf", f"_backup_{timestamp}.dbf")
+            shutil.copy2(ruta_stock, ruta_backup)
+    except Exception as e:
+        return 0, [f"❌ Error al crear backup: {e}"]
+
+    registros_aprobados = 0
+    mensajes_log = []
     
     try:
-        shutil.copy2(RUTAS["stock_movimientos"]["red"], RUTAS["stock_movimientos"]["loc"])
-        backup_name = f"STOCKMA_BACKUP_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.dbf"
-        backup_path = os.path.join(os.path.dirname(RUTAS["stock_movimientos"]["red"]), backup_name)
-        shutil.copy2(RUTAS["stock_movimientos"]["red"], backup_path)
+        # Abrimos la tabla
+        tabla_stock = dbf.Table(ruta_stock, codepage='cp1252')
+        tabla_stock.open(mode=dbf.READ_WRITE)
         
-        items_actualizados = 0
+        conn = sqlite3.connect(RUTAS["lab"])
+        cursor = conn.cursor()
 
-        with dbf.Table(RUTAS["stock_movimientos"]["loc"]) as tabla_maestra:
-            tabla_maestra.open(mode=dbf.READ_WRITE)
+        for index, fila in df_pendientes.iterrows():
+            try:
+                codigo_tubo = str(fila['codigo_mp']).strip().upper()
+                kilos_a_descontar = float(fila['kilos_a_descontar'])
+                tubos_a_descontar = int(fila["tubos_a_descontar"])
+                id_registro = fila['id']
+                tabla_origen = fila['tabla_origen']
+                origen_texto = str(fila['origen']).strip().upper()
+                id_origen = mapa_origenes.get(origen_texto, 0)
+                
+                encontrado = False
+
+                # 🚀 SOLUCIÓN AL ERROR: Búsqueda manual compatible
+                # Recorremos la tabla buscando la coincidencia de los 3 campos
+                for registro in tabla_stock:
+                    # Extraemos y limpiamos los valores del DBF para comparar
+                    cod_dbf = str(registro.CODIGO).strip().upper()
+                    ori_dbf = int(registro.ORIGEN)
+                    ani_dbf = int(registro.ANO)
+
+                    if cod_dbf == codigo_tubo and ori_dbf == id_origen and ani_dbf == ANIO_CORRIENTE:
+                        # Si coincide, procedemos al descuento
+                        with registro:
+                            # Importante: Usar el nombre exacto del campo (TKGSTOCK o STOCK)
+                            registro.TKGSTOCK -= kilos_a_descontar
+                            registro.TUBOSSTOCK -= tubos_a_descontar
+                        encontrado = True
+                        break # Salimos del loop una vez encontrado
+
+                if encontrado:
+                    query_update = f"UPDATE {tabla_origen} SET estado_sync = 'APROBADO' WHERE id = ?"
+                    cursor.execute(query_update, (id_registro,))
+                    registros_aprobados += 1
+                    mensajes_log.append(f"✅ {codigo_tubo} ({origen_texto}): Descontado.")
+                else:
+                    mensajes_log.append(f"⚠️ {codigo_tubo}: No encontrado (Origen {origen_texto}, Año {ANIO_CORRIENTE}).")
+
+            except Exception as e_fila:
+                mensajes_log.append(f"❌ Error en {codigo_tubo}: {e_fila}")
             
-            for registro in tabla_maestra:
-                # 3. VAMOS DIRECTO A LA COLUMNA "ANO"
-                try: 
-                    ano_registro = int(getattr(registro, 'ANO')) 
-                except: 
-                    ano_registro = 0
-                    
-                # Volvemos a tu filtro del 2026
-                if ano_registro == 2026:
-                    cod_registro = str(registro.CODIGO).strip().upper()
-                    try: ori_registro = str(registro.ORIGEN).strip().replace('.0', '')
-                    except: ori_registro = "-"
-                    
-                    # Leemos directamente la tupla
-                    for (cod_pend, ori_pend), valores in consumos_dict.items():
-                        ori_pend_traducido = mapa_origen_inverso.get(ori_pend, ori_pend)
-                        
-                        if cod_registro == cod_pend and ori_registro == ori_pend_traducido:
-                            k_restar = valores['k']
-                            t_restar = valores['t']
-                            
-                            if k_restar > 0 or t_restar > 0:
-                                nuevo_kilos = float(registro.TKGSTOCK) - k_restar
-                                nuevo_tubos = float(registro.TUBOSSTOCK) - t_restar
-                                dbf.write(registro, TKGSTOCK=nuevo_kilos, TUBOSSTOCK=nuevo_tubos)
-                                
-                                valores['k'] = 0.0
-                                valores['t'] = 0
-                                valores['encontrado'] = True
-                                items_actualizados += 1
+        conn.commit()
+        conn.close()
+        tabla_stock.close()
 
-        shutil.copy2(RUTAS["stock_movimientos"]["loc"], RUTAS["stock_movimientos"]["red"])
-        
-        if items_actualizados > 0:
-            conn = sqlite3.connect(RUTAS["lab"])
-            cursor = conn.cursor()
-            cursor.execute("UPDATE consumos_planta SET estado_sync = 'PROCESADO' WHERE estado_sync = 'PENDIENTE'")
-            conn.commit()
-            conn.close()
-            st.cache_data.clear()
-            return len(df_pendientes), f"✅ Sincronización exitosa. Se actualizaron {items_actualizados} artículos."
-        else:
-            detalles_perdidos = [f"{k[0]} (Origen: {k[1]})" for k, v in consumos_dict.items() if not v['encontrado']]
-            return 0, f"⚠️ Alerta: Ningún código del informe se encontró en el DBF. Revisar: {', '.join(detalles_perdidos)}"
+        return registros_aprobados, mensajes_log
 
     except Exception as e:
-        return -1, f"Error crítico: {e}"
+        return 0, [f"Error crítico: {e}"]
 
 # ==========================================
 # GESTOR DE PERFILES Y RUTEO DE PANTALLAS
@@ -277,27 +297,37 @@ elif perfil == "Administrador":
             st.markdown("### 📦 Inventario de Materia Prima (Año 2026)")
             df_pendientes = obtener_consumos_pendientes()
             if not df_pendientes.empty:
-                st.warning(f"🔔 ¡Atención! Hay **{len(df_pendientes)}** reportes de consumo de Planta esperando ser descontados.")
+                # Renombramos y ordenamos las columnas para que el administrador entienda fácil
+                # Asumiendo que tus tablas ahora tienen la columna 'origen' (materia prima)
+                columnas_ver = ['fecha', 'SECTOR', 'maquina', 'lote_lumen', 'origen', 'kg_cortados'] # o los campos que correspondan
                 
-                st.markdown("**🔍 Detalle de los movimientos a descontar:**")
-                st.dataframe(
-                    df_pendientes[['fecha', 'hora', 'maquina', 'codigo_mp', 'origen', 'kilos_usados', 'tubos_usados', 'desc_destruido']], 
-                    use_container_width=True, 
-                    hide_index=True
-                )
+                # Mostrar tabla estilizada
+                st.write("### 📝 Consumos pendientes de aprobación")
                 
-                if st.button("⚙️ APROBAR Y DESCONTAR DEL STOCK", type="primary"):
-                    with st.spinner("Modificando base central y creando backup de seguridad..."):
-                        filas, msg = sincronizar_stock_dbf()
-                        if filas > 0:
-                            st.success(f"✅ Se aplicaron {filas} reportes. {msg}")
-                            import time
-                            time.sleep(2)
-                            st.rerun()
-                        else:
-                            st.error(msg)
+                # Filtro rápido por sector
+                sector_sel = st.selectbox("Filtrar por Sector:", ["Todos", "Corte", "Viales"])
+                if sector_sel != "Todos":
+                    df_mostrar = df_pendientes[df_pendientes['SECTOR'] == sector_sel]
+                else:
+                    df_mostrar = df_pendientes
+
+                st.dataframe(df_mostrar, use_container_width=True)
+                
+                if st.button("Aprobar y Descontar Stock"):
+                    aprobados, log = sincronizar_stock_dbf()
+                    st.success(f"Se aprobaron {aprobados} registros correctamente.")
+                    
+                    # Mostramos el reporte detallado
+                    with st.expander("Ver detalle de sincronización", expanded=True):
+                        for linea in log:
+                            if "✅" in linea:
+                                st.write(linea)
+                            elif "⚠️" in linea:
+                                st.warning(linea)
+                            else:
+                                st.error(linea)
             else:
-                st.success("✅ Sistema sincronizado. Todo el consumo ha sido descontado.")
+                st.success("✅ No hay consumos pendientes de aprobación.")
             
             st.markdown("---")
             df_st = cargar_stock_fusionado()

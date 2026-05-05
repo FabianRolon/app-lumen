@@ -85,8 +85,8 @@ def inicializar_db():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS proceso_corte_tubos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            fecha TEXT, hora TEXT, maquina TEXT, lote_lumen TEXT,
-            legajo_operario TEXT, kg_vidrio_bruto REAL, kg_cortados REAL, descarte REAL
+            fecha TEXT, hora TEXT, maquina TEXT, codigo_mp TEXT, origen TEXT, lote_lumen TEXT,
+            legajo_operario TEXT, kg_vidrio_bruto REAL, kg_cortados REAL, descarte REAL, estado_sync TEXT
         )
     ''')
 

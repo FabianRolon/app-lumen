@@ -90,11 +90,16 @@ def cargar_controles_hoy(maquina, codigo, fecha):
     conn.close()
     return df
 
-def guardar_corte_tubo(datos):
-    conn = sqlite3.connect(RUTAS["lab"])
-    cursor = conn.cursor()
-    cursor.execute('INSERT INTO proceso_corte_tubos (fecha, hora, maquina, lote_lumen, legajo_operario, kg_vidrio_bruto, kg_cortados, descarte) VALUES (?,?,?,?,?,?,?,?)', datos)
-    conn.commit()
+def guardar_corte_tubo(datos): 
+    conn = sqlite3.connect(RUTAS["lab"]) 
+    cursor = conn.cursor() 
+    # Agregamos codigo_mp y estado_sync a la consulta
+    cursor.execute('''
+        INSERT INTO proceso_corte_tubos 
+        (fecha, hora, maquina, codigo_mp, origen, lote_lumen, legajo_operario, kg_vidrio_bruto, tubos_usados, kg_cortados, descarte, estado_sync) 
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+    ''', datos) 
+    conn.commit() 
     conn.close()
 
 def guardar_maquina_tubo(datos):
@@ -250,7 +255,8 @@ def renderizar_planta(df_st, df_prod):
                 st.markdown("#### Registro de Corte de Caña")
                 with st.container(border=True):
                     c_c1, c_c2, c_c3 = st.columns(3)
-                    with c_c1: v_bruto = st.number_input("Kg Vidrio Bruto (Caña)", min_value=0.0)
+                    with c_c1: v_bruto = st.number_input("Kg Vidrio Bruto", min_value=0.0)
+                    with c_c1: tubos_usados = st.number_input("Tubos usados", min_value=0)
                     with c_c2: v_neto = st.number_input("Kg Cortados (Útiles)", min_value=0.0)
                     with c_c3: v_desc = st.number_input("Descarte Corte (Kg)", min_value=0.0)
                     
@@ -262,7 +268,7 @@ def renderizar_planta(df_st, df_prod):
                         if v_pin_sel != "-":
                             legajo_limpio = v_pin_sel.split(" - ")[0]
                             if validar_pin_operario(legajo_limpio, v_pin_pass):
-                                guardar_corte_tubo((fecha_hoy, datetime.datetime.now().strftime("%H:%M:%S"), maq_sel, lote_lumen, legajo_limpio, v_bruto, v_neto, v_desc))
+                                guardar_corte_tubo((fecha_hoy, datetime.datetime.now().strftime("%H:%M:%S"), maq_sel, cod_material, ori_sel, lote_lumen, legajo_limpio, v_bruto, tubos_usados, v_neto, v_desc, "PENDIENTE"))
                                 st.success("Corte registrado.")
                             else: st.error("❌ PIN incorrecto.")
 

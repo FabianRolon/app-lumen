@@ -247,7 +247,7 @@ def cargar_stock_fusionado():
         return pd.DataFrame()
     try:
         shutil.copy2(RUTAS["stock_movimientos"]["red"], RUTAS["stock_movimientos"]["loc"])
-        df_ma = pd.DataFrame(iter(DBF(RUTAS["stock_movimientos"]["loc"], encoding='latin1')))
+        df_ma = pd.DataFrame(iter(DBF(RUTAS["stock_movimientos"]["loc"], encoding='cp1252')))
         
         col_ano = next((c for c in df_ma.columns if c.strip().upper().startswith('A') and c.strip().upper().endswith('O')), None)
         if col_ano:
@@ -260,7 +260,7 @@ def cargar_stock_fusionado():
         df_ma = df_ma[[c for c in cols_ma if c in df_ma.columns]]
 
         shutil.copy2(RUTAS["stock_pallets"]["red"], RUTAS["stock_pallets"]["loc"])
-        df_pa = pd.DataFrame(iter(DBF(RUTAS["stock_pallets"]["loc"], encoding='latin1')))
+        df_pa = pd.DataFrame(iter(DBF(RUTAS["stock_pallets"]["loc"], encoding='cp1252')))
         df_pa['CODIGO'] = df_pa['CODIGO'].astype(str).str.strip().str.upper()
         
         if 'TUBOPALLET' in df_pa.columns: df_pa['TUBOPALLET'] = pd.to_numeric(df_pa['TUBOPALLET'], errors='coerce').fillna(0)
