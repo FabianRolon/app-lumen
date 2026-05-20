@@ -57,7 +57,7 @@ def guardar_parada_maquina(datos):
 def guardar_consumo_idp(datos):
     conn = sqlite3.connect(RUTAS["lab"])
     cursor = conn.cursor()
-    cursor.execute('''INSERT INTO consumos_planta (fecha, hora, maquina, codigo_mp, lote_lumen, origen, kilos_usados, tubos_usados, prod_total, desc_destruido, desc_recuperable, estado_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE')''', datos)
+    cursor.execute('''INSERT INTO consumos_planta (fecha, hora, maquina, legajo_operador, codigo_mp, lote_lumen, origen, kilos_usados, tubos_usados, prod_total, desc_destruido, desc_recuperable, supervisor, estado_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE')''', datos)
     conn.commit()
     conn.close()
 
@@ -377,7 +377,7 @@ def renderizar_planta(df_st, df_prod):
                             if i_pin_sel != "-":
                                 legajo_limpio = i_pin_sel.split(" - ")[0]
                                 if validar_pin_operario(legajo_limpio, i_pin_pass):
-                                    guardar_consumo_idp((fecha_hoy, datetime.datetime.now().strftime("%H:%M:%S"), maq_sel, id_lib, lote_lumen, ori_sel, i_kg, i_tub, i_prod, i_dest, i_recu))
+                                    guardar_consumo_idp((fecha_hoy, datetime.datetime.now().strftime("%H:%M:%S"), maq_sel, legajo_limpio, id_lib, lote_lumen, ori_sel, i_kg, i_tub, i_prod, i_dest, i_recu, None))
                                     st.success("Informe registrado.")   
                                 else: st.error("❌ PIN incorrecto.")
 

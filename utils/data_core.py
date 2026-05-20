@@ -96,12 +96,23 @@ def sincronizar_personal_dbf():
         
         nuevos = 0
         for _, emp in activos.iterrows():
-            # Limpieza de CUIL para DNI
-            cuil_raw = str(emp.get('CUIL', '')).replace('-', '').strip()
+            # Limpieza de CUIL (quitamos guiones, espacios y posibles decimales .0)
+            cuil_raw = str(emp.get('CUIL', '')).split('.')[0].replace('-', '').strip()
             dni = cuil_raw if cuil_raw else "0"
             legajo = str(emp.get('LEGAJO', '')).strip()
             nombre = str(emp.get('NOMBREC', 'S/N')).strip()
-            pin_inicial = dni[-4:] if len(dni) >= 4 else "1234"
+            
+            # Lógica inteligente para el PIN inicial
+            if len(dni) >= 10:
+                # Si tiene 10 u 11 números, es un CUIL. 
+                # Salteamos el último dígito y tomamos los 4 anteriores (Los del DNI).
+                pin_inicial = dni[-5:-1]
+            elif len(dni) >= 4:
+                # Si tiene menos de 10 números, asumimos que es un DNI tradicional.
+                # Tomamos los últimos 4 normalmente.
+                pin_inicial = dni[-4:]
+            else:
+                pin_inicial = "1234"
             
             if dni != "0":
                 cursor.execute('''INSERT OR REPLACE INTO credenciales_empleados (dni, legajo, nombre, pin, rol, estado)
@@ -249,13 +260,22 @@ def cargar_stock_fusionado():
         shutil.copy2(RUTAS["stock_movimientos"]["red"], RUTAS["stock_movimientos"]["loc"])
         df_ma = pd.DataFrame(iter(DBF(RUTAS["stock_movimientos"]["loc"], encoding='cp1252')))
         
+        # 1. Buscamos la columna del año dinámicamente
         col_ano = next((c for c in df_ma.columns if c.strip().upper().startswith('A') and c.strip().upper().endswith('O')), None)
+        
         if col_ano:
             df_ma[col_ano] = pd.to_numeric(df_ma[col_ano], errors='coerce').fillna(0).astype(int)
-            df_ma = df_ma[df_ma[col_ano] == 2026].copy()
+            # ELIMINADO: Ya no filtramos por 2026 aquí. Dejamos que la Pestaña 7 haga el filtro.
+            # Renombramos la columna a 'ANO' para que la interfaz siempre la encuentre con ese nombre exacto.
+            df_ma = df_ma.rename(columns={col_ano: 'ANO'})
+        else:
+            # Si por algún error el DBF no tiene año, le creamos la columna para evitar errores en la pantalla
+            df_ma['ANO'] = 2026 
             
         df_ma['CODIGO'] = df_ma['CODIGO'].astype(str).str.strip().str.upper()
-        cols_ma = ['CODIGO', 'TKGSTOCK', 'TUBOSSTOCK', 'DESCRIP']
+        
+        # 2. AGREGAMOS 'ANO' a la lista de columnas para que no se borre
+        cols_ma = ['ANO', 'CODIGO', 'TKGSTOCK', 'TUBOSSTOCK', 'DESCRIP']
         if 'ORIGEN' in df_ma.columns: cols_ma.append('ORIGEN')
         df_ma = df_ma[[c for c in cols_ma if c in df_ma.columns]]
 
@@ -286,6 +306,7 @@ def cargar_stock_fusionado():
         df_fused['PESOTUBO'] = pd.to_numeric(df_fused['PESOTUBO'], errors='coerce').fillna(0)
         
         df_fused['CANT_PALLETS'] = df_fused.apply(lambda row: round(row['TUBOSSTOCK'] / row['TUBOPALLET'], 2) if row['TUBOPALLET'] > 0 else 0.0, axis=1)
+        
         return df_fused
     except Exception as e:
         st.error(f"Error en Fusión de Stock: {e}")

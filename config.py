@@ -4,18 +4,17 @@ import streamlit as st
 RUTAS = {
     "asist": {"red": r'C:\Reloj\Bases\ASIGTURN.DBF', "loc": r'C:\proyecto_Asistencia\asistencia_temp.dbf'},
     "personal": {"red": r'\\reloj\Reloj\Bases\Empleado.Dbf', "loc": r'C:\proyecto_Asistencia\empleado_temp.dbf'},
-    "bano": {"red": r'\\CALIDAD\Bases\BANODBF.dbf', "loc": r'C:\proyecto_Asistencia\bano_temp.dbf'},
+    "bano": {"red": r'\\CALIDAD_LUMEN\Reloj\Bases\BANODBF.DBF', "loc": r'C:\proyecto_Asistencia\bano_temp.dbf'},
     "lab": r'C:\proyecto_Asistencia\laboratorio.db',
     "pedidos": {"red": r'\\LUMENGLASS\Sistemas\Bases\REMENCA.dbf', "loc": r'C:\proyecto_Asistencia\remenca_temp.dbf'},
     "remitos": {"red": r'\\LUMENGLASS\Sistemas\Bases\REMITOS.dbf', "loc": r'C:\proyecto_Asistencia\remitos_temp.dbf'},
     "produccion": {"red": r'\\LUMENGLASS\Sistemas\Bases\ORDPRODU.dbf', "loc": r'C:\proyecto_Asistencia\ordprodu_temp.dbf'},
     "maestro_clientes": {"red": r'\\LUMENGLASS\Sistemas\Bases\CLIENTES.dbf', "loc": r'C:\proyecto_Asistencia\clientes_temp.dbf'},
-    "certificados": r'\\CALIDAD\certificados de calidad',
+    "certificados": r'\\CALIDAD_LUMEN\certificados de calidad',
     "stock_movimientos": {"red": r'\\LUMENGLASS\Sistemas\Bases\STOCKMA.dbf', "loc": r'C:\proyecto_Asistencia\stockma_temp.dbf'},
     "stock_pallets": {"red": r'\\LUMENGLASS\Sistemas\Bases\PALLETS.dbf', "loc": r'C:\proyecto_Asistencia\pallets_temp.dbf'}
 }
 
-# --- CONSTANTES DE LA FÁBRICA ---
 RESPONSABLES = ["Nahuel Ayala", "Hernan Spataro", "Fabian Rolon", "Lucio Menendez"]
 BOCAS = ["Tapa Rosca","20 Normal","20 C/Anclaje","13 Normal","13 C/Anclaje","8 Normal","8 C/Anclaje","10 Normal","Tapa Rosca 9A","Tapa Rosca 9B","Tapa Rosca 10","Perfumero","Boca Spray","Tubo","Cuadrada","N/Aplica"]
 MAQUINAS = ["F1", "F2", "F3", "F4", "P1", "P2", "P3"]
