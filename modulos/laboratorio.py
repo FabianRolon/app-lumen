@@ -174,10 +174,12 @@ def registrar_analisis_legado(datos_manuales):
         cursor.execute('''
             INSERT INTO analisis_hidrolitica (
                 nro_analisis, fecha, responsable, cliente, cod, lote_lumen, resultado_final, maximo, observaciones,
-                medida, capacidad, color, boca, pared, maquina, impresion, l_m_prima, batch, nro_certificado
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                medida, capacidad, color, boca, pared, maquina, impresion, l_m_prima, batch, nro_certificado,
+                sup_valida, estado
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ''', (nro_analisis_manual, fecha, responsable, cliente, cod, lote_lumen, resultado_final, maximo, observaciones,
-              medida, capacidad, color, boca, pared, maquina, impresion, l_m_prima, batch, nro_cert))
+              medida, capacidad, color, boca, pared, maquina, impresion, l_m_prima, batch, nro_cert, 
+              None, 'PENDIENTE'))
         conn.commit()
     except Exception as e:
         st.error(f"Falla crítica al escribir en base de datos: {e}")
@@ -537,6 +539,9 @@ def renderizar_modulo_laboratorio():
     with tab_lab2:
         with st.expander("⏱️ Cargar Análisis Histórico (Papel a Digital)"):
             st.info("Digitalice un análisis antiguo para asignarle un número de certificado oficial.")
+
+            df_empleados = obtener_operarios_habilitados()
+
             c_leg1, c_leg2, c_leg3 = st.columns(3)
             with c_leg1:
                 leg_lote = st.text_input("Lote Lumen", key="leg_lote")
@@ -546,15 +551,37 @@ def renderizar_modulo_laboratorio():
                 h_capacidad = st.text_input("Capacidad (ml)", placeholder="Ej: 10ml")
             with c_leg2:
                 leg_fec = st.date_input("Fecha Original")
-                leg_resp = st.selectbox("Analista", RESPONSABLES, key="leg_resp")
+                
+                st.markdown("---")
+                st.markdown("🔒 **Firma Digital del Analista**")
+                # Reemplazamos el selectbox plano por el formato normalizado con Legajo + Nombre
+                operario_sel = st.selectbox("Seleccione su Nombre", df_empleados, key="leg_resp_sel")
+                # Extraemos el legajo puro para enviarlo a la base de datos y validarlo
+                leg_resp = operario_sel.split(" - ")[0] if " - " in operario_sel else operario_sel
+                
+                # Agregamos la entrada segura para el PIN
+                pin_operario = st.text_input("Ingrese su PIN", type="password", key="leg_pin_cargador")
             with c_leg3:
                 leg_res = st.number_input("Resultado Final", format="%.2f", key="leg_res")
                 leg_max = st.number_input("Máximo", format="%.2f", key="leg_max")
+                leg_obs = st.text_area("Observaciones", value="CARGA HISTÓRICA", key="leg_obs")
                 
             if st.button("💾 Asignar Nro. de Certificado", type="primary"):
-                datos = (leg_fec.strftime("%Y-%m-%d"), leg_resp, leg_cli, leg_cod, leg_lote, leg_res, leg_max, "CARGA HISTÓRICA", h_maquina, h_capacidad)
-                id_nuevo, cert_nuevo = registrar_analisis_legado(datos)
-                st.success(f"✅ Digitalizado. Nro. de Certificado asignado: {cert_nuevo}. Búsquelo abajo para imprimir.")
+                # 2. Validación de seguridad con PIN antes de procesar el guardado
+                if " - " in operario_sel and not pin_operario:
+                    st.error("❌ Debe ingresar su PIN para firmar digitalmente la carga.")
+                elif " - " in operario_sel and not validar_pin_operario(leg_resp, pin_operario):
+                    st.error("❌ PIN de operario incorrecto. Registro denegado por auditoría.")
+                else:
+                    # Si pasa las validaciones, armamos la tupla y registramos
+                    datos = (leg_fec.strftime("%Y-%m-%d"), leg_resp, leg_cli, leg_cod, leg_lote, leg_res, leg_max, leg_obs, h_maquina, h_capacidad)
+                    id_nuevo, cert_nuevo = registrar_analisis_legado(datos)
+                    
+                    if id_nuevo > 0:
+                        st.success(f"✅ Digitalizado. Enviado en estado PENDIENTE. Nro. de Certificado asignado: {cert_nuevo}. Búsquelo abajo para imprimir.")
+                        st.rerun()
+
+        st.markdown("---")
 
         st.markdown("---")
         df_lab = cargar_historial_lab()
@@ -647,15 +674,29 @@ def renderizar_modulo_laboratorio():
 
     with tab_lab3:
         st.markdown("### 🌡️ Registro de Temperatura Ambiente")
+        df_empleados = obtener_operarios_habilitados()
         col_t1, col_t2, col_t3 = st.columns(3)
-        with col_t1: temp_resp = st.selectbox("Firma/Rúbrica", RESPONSABLES, key="t_resp")
+        with col_t1: 
+            temp_resp = st.selectbox("Firma/Rúbrica", df_empleados, key="t_resp")
+            pin_operario = st.text_input("Ingrese su PIN", type="password", key="temp_resp")
         with col_t2: temp_valor = st.number_input("Temperatura (°C)", min_value=0.0, max_value=50.0, step=0.1, format="%.1f", key="t_val")
         with col_t3: temp_verif = st.text_input("Verificación / Observaciones", key="t_verif", placeholder="Ej: OK")
+        # Extraemos el legajo puro para enviarlo a la base de datos y validarlo
+        leg_resp = temp_resp.split(" - ")[0] if " - " in operario_sel else operario_sel
+
+
 
         if st.button("💾 Guardar Temperatura", type="primary"):
-            ahora = datetime.datetime.now()
-            guardar_temperatura((ahora.strftime("%Y-%m-%d"), ahora.strftime("%H:%M:%S"), temp_valor, temp_resp, temp_verif))
-            st.success(f"✅ Temperatura registrada.")
+                # 2. Validación de seguridad con PIN antes de procesar el guardado
+                if " - " in temp_resp and not pin_operario:
+                    st.error("❌ Debe ingresar su PIN para firmar digitalmente la carga.")
+                elif " - " in temp_resp and not validar_pin_operario(leg_resp, pin_operario):
+                    st.error("❌ PIN de operario incorrecto. Registro denegado por auditoría.")
+                else:
+                    # Si pasa las validaciones, armamos la tupla y registramos
+                    ahora = datetime.datetime.now()
+                    guardar_temperatura((ahora.strftime("%Y-%m-%d"), ahora.strftime("%H:%M:%S"), temp_valor, temp_resp, temp_verif))
+                    st.success(f"✅ Temperatura registrada.")
 
         st.markdown("---")
         df_temp = cargar_historial_temperatura()
